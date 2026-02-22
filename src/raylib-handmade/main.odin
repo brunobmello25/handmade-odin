@@ -3,6 +3,7 @@ package main
 import rl "vendor:raylib"
 
 width, height :: 960, 540
+FPS :: 60
 
 Backbuffer :: struct {
 	width, height: i32,
@@ -43,6 +44,8 @@ main :: proc() {
 	rl.InitWindow(width, height, "Handmade Raylib")
 
 	backbuffer := make_backbuffer(width, height)
+
+	rl.SetTargetFPS(FPS)
 
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
