@@ -2,6 +2,8 @@ package main
 
 import rl "vendor:raylib"
 
+import "../game"
+
 width, height :: 960, 540
 FPS :: 60
 
@@ -25,15 +27,6 @@ make_backbuffer :: proc(width, height: i32) -> Backbuffer {
 	return Backbuffer{texture = texture, width = width, height = height, pixels = pixels}
 }
 
-render_weird_gradient :: proc(backbuffer: ^Backbuffer) {
-	for y in 0 ..< backbuffer.height {
-		for x in 0 ..< backbuffer.width {
-			blue := u32(x)
-			green := u32(y)
-			backbuffer.pixels[y * backbuffer.width + x] = (0xFF << 24) | (green << 8) | blue
-		}
-	}
-}
 
 blit_backbuffer :: proc(backbuffer: Backbuffer) {
 	rl.UpdateTexture(backbuffer.texture, raw_data(backbuffer.pixels))
@@ -52,7 +45,12 @@ main :: proc() {
 
 		rl.ClearBackground(rl.BLACK)
 
-		render_weird_gradient(&backbuffer)
+		game_backbuffer := game.Backbuffer {
+			width  = backbuffer.width,
+			height = backbuffer.height,
+			pixels = backbuffer.pixels,
+		}
+		game.update_and_render(game_backbuffer)
 		blit_backbuffer(backbuffer)
 
 		rl.EndDrawing()
