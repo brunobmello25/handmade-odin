@@ -1,7 +1,9 @@
 package platform
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:log"
+import "core:mem"
 import rl "vendor:raylib"
 
 import "../game"
@@ -22,9 +24,9 @@ _sound_buffer: ^SoundBuffer
 
 SoundBuffer :: struct {
 	ring:        []i16, // circular buffer; AUDIO_RING_FRAMES * channels samples
-	ring_cap:    u32,   // = AUDIO_RING_FRAMES
-	write_pos:   u32,   // absolute frame count; written by game thread
-	read_pos:    u32,   // absolute frame count; written by audio callback
+	ring_cap:    u32, // = AUDIO_RING_FRAMES
+	write_pos:   u32, // absolute frame count; written by game thread
+	read_pos:    u32, // absolute frame count; written by audio callback
 	sample_rate: u32,
 	channels:    u32,
 	stream:      rl.AudioStream,
@@ -45,11 +47,11 @@ _audio_callback :: proc "c" (raw_buffer: rawptr, frames: u32) #no_bounds_check {
 
 	for i in 0 ..< to_serve {
 		src := ((read_pos + i) % sb.ring_cap) * sb.channels
-		out[i * 2]     = sb.ring[src]
+		out[i * 2] = sb.ring[src]
 		out[i * 2 + 1] = sb.ring[src + 1]
 	}
 	for i in to_serve ..< frames {
-		out[i * 2]     = 0
+		out[i * 2] = 0
 		out[i * 2 + 1] = 0
 	}
 
@@ -230,7 +232,7 @@ init_sound_buffer :: proc() -> ^SoundBuffer {
 push_audio :: proc(sb: ^SoundBuffer, frames: u32) #no_bounds_check {
 	for i in 0 ..< frames {
 		dst := ((sb.write_pos + i) % sb.ring_cap) * sb.channels
-		sb.ring[dst]     = sb.temp[i * sb.channels]
+		sb.ring[dst] = sb.temp[i * sb.channels]
 		sb.ring[dst + 1] = sb.temp[i * sb.channels + 1]
 	}
 	intrinsics.atomic_store(&sb.write_pos, sb.write_pos + frames)
@@ -252,6 +254,30 @@ get_samples_to_generate :: proc(sound_buffer: ^SoundBuffer) -> u32 {
 	return min(to_write, space)
 }
 
+init_memory :: proc() -> (game.Memory, runtime.Allocator_Error) {
+	permanent_storage_size := 64 * mem.Megabyte
+	transient_storage_size := 2 * mem.Gigabyte
+
+	permanent_storage, err := mem.alloc(permanent_storage_size)
+	if err != nil {
+		return game.Memory{}, err
+	}
+
+	transient_storage, transient_err := mem.alloc(transient_storage_size)
+	if transient_err != nil {
+		mem.free(permanent_storage)
+		return game.Memory{}, transient_err
+	}
+
+	return game.Memory {
+			permanent_storage = permanent_storage,
+			permanent_storage_size = permanent_storage_size,
+			transient_storage = transient_storage,
+			transient_storage_size = transient_storage_size,
+		},
+		nil
+}
+
 main :: proc() {
 	context.logger = log.create_console_logger()
 
@@ -263,6 +289,10 @@ main :: proc() {
 	backbuffer := init_backbuffer(width, height)
 	sound_buffer := init_sound_buffer()
 	defer rl.StopAudioStream(sound_buffer.stream)
+	game_memory, err := init_memory()
+	if err != nil {
+		log.fatalf("Failed to initialize memory: %v", err)
+	}
 
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
@@ -272,8 +302,17 @@ main :: proc() {
 		frames_to_generate := get_samples_to_generate(sound_buffer)
 
 		game.update_and_render(
-			game.Backbuffer{width = backbuffer.width, height = backbuffer.height, pixels = backbuffer.pixels},
-			game.SoundBuffer{sample_count = frames_to_generate, samples = sound_buffer.temp[:], sample_rate = sound_buffer.sample_rate},
+			&game_memory,
+			game.Backbuffer {
+				width = backbuffer.width,
+				height = backbuffer.height,
+				pixels = backbuffer.pixels,
+			},
+			game.SoundBuffer {
+				sample_count = frames_to_generate,
+				samples = sound_buffer.temp[:],
+				sample_rate = sound_buffer.sample_rate,
+			},
 			&input,
 		)
 		push_audio(sound_buffer, frames_to_generate)

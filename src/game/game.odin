@@ -1,11 +1,21 @@
 package game
 
+import "core:fmt"
 import "core:log"
 import "core:math"
 
-tsine: f32 = 0 // TODO: pull this to game state when we have memory
-
 MAX_CONTROLLERS :: 4
+
+GameState :: struct {
+	tsine: f32,
+}
+
+Memory :: struct {
+	permanent_storage:      rawptr,
+	transient_storage:      rawptr,
+	permanent_storage_size: int,
+	transient_storage_size: int,
+}
 
 SoundBuffer :: struct {
 	sample_count: u32,
@@ -56,20 +66,29 @@ Input :: struct {
 	controllers:   [MAX_CONTROLLERS + 1]Controller_Input,
 }
 
-output_sine_wave :: proc(sound_buffer: SoundBuffer) {
+output_sine_wave :: proc(tsine: ^f32, sound_buffer: SoundBuffer) {
 	tone_hz: f32 = 256
 	tone_volume: f32 = 3000
 	wave_period := f32(sound_buffer.sample_rate) / tone_hz
 
 	for i in 0 ..< sound_buffer.sample_count {
-		sample_value := i16(math.sin(tsine) * tone_volume)
+		sample_value := i16(math.sin(tsine^) * tone_volume)
 		sound_buffer.samples[i * 2] = sample_value
 		sound_buffer.samples[i * 2 + 1] = sample_value
-		tsine += 2.0 * math.PI / wave_period
+		tsine^ += 2.0 * math.PI / wave_period
 	}
 }
 
-update_and_render :: proc(backbuffer: Backbuffer, sound_buffer: SoundBuffer, input: ^Input) {
+update_and_render :: proc(
+	memory: ^Memory,
+	backbuffer: Backbuffer,
+	sound_buffer: SoundBuffer,
+	input: ^Input,
+) {
+	assert(size_of(GameState) <= memory.permanent_storage_size)
+
+	game_state := cast(^GameState)memory.permanent_storage
+
 	for i in 0 ..< MAX_CONTROLLERS {
 		if input.controllers[i].move_up.ended_down {
 			log.debugf("Controller %d: move up is pressed", i)
@@ -77,7 +96,7 @@ update_and_render :: proc(backbuffer: Backbuffer, sound_buffer: SoundBuffer, inp
 	}
 
 	render_weird_gradient(backbuffer)
-	output_sine_wave(sound_buffer)
+	output_sine_wave(&game_state.tsine, sound_buffer)
 }
 
 render_weird_gradient :: proc(backbuffer: Backbuffer) {
