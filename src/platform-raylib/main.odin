@@ -201,24 +201,39 @@ process_input :: proc() -> game.Input {
 	return input
 }
 
-init_sound_buffer :: proc() -> SoundBuffer {
+init_sound_buffer :: proc() -> ^SoundBuffer {
 	channels: u32 = 2
 	sample_size: u32 = 16
 	sample_rate: u32 = 48000
 	ring_cap: u32 = AUDIO_RING_FRAMES
 
-	// Callback is invoked roughly once per frame; size the sub-buffer to match.
 	rl.SetAudioStreamBufferSizeDefault(i32(sample_rate / u32(FPS)))
 	stream := rl.LoadAudioStream(sample_rate, sample_size, channels)
 
-	return SoundBuffer {
+	sb := new(SoundBuffer)
+	sb^ = SoundBuffer {
 		ring        = make([]i16, ring_cap * channels),
 		ring_cap    = ring_cap,
 		sample_rate = sample_rate,
 		channels    = channels,
 		stream      = stream,
-		temp        = make([]i16, ring_cap * channels), // same size as ring; more than enough for one frame
+		temp        = make([]i16, ring_cap * channels),
 	}
+
+	_sound_buffer = sb
+	rl.SetAudioStreamCallback(sb.stream, _audio_callback)
+	rl.PlayAudioStream(sb.stream)
+	return sb
+}
+
+// Copies frames written to temp into the ring buffer and advances write_pos.
+push_audio :: proc(sb: ^SoundBuffer, frames: u32) #no_bounds_check {
+	for i in 0 ..< frames {
+		dst := ((sb.write_pos + i) % sb.ring_cap) * sb.channels
+		sb.ring[dst]     = sb.temp[i * sb.channels]
+		sb.ring[dst + 1] = sb.temp[i * sb.channels + 1]
+	}
+	intrinsics.atomic_store(&sb.write_pos, sb.write_pos + frames)
 }
 
 // How many frames to generate this tick.
@@ -243,42 +258,25 @@ main :: proc() {
 	rl.SetConfigFlags({.WINDOW_RESIZABLE})
 	rl.InitWindow(width, height, "Game - Handmade Raylib")
 	rl.InitAudioDevice()
-
-	backbuffer := init_backbuffer(width, height)
-
 	rl.SetTargetFPS(FPS)
 
+	backbuffer := init_backbuffer(width, height)
 	sound_buffer := init_sound_buffer()
-	_sound_buffer = &sound_buffer
-	rl.SetAudioStreamCallback(sound_buffer.stream, _audio_callback)
-	rl.PlayAudioStream(sound_buffer.stream)
+	defer rl.StopAudioStream(sound_buffer.stream)
 
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
-
 		rl.ClearBackground(rl.BLACK)
 
-		game_backbuffer := game.Backbuffer {
-			width  = backbuffer.width,
-			height = backbuffer.height,
-			pixels = backbuffer.pixels,
-		}
 		input := process_input()
-		frames_to_generate := get_samples_to_generate(&sound_buffer)
-		game_soundbuffer := game.SoundBuffer {
-			sample_count = frames_to_generate,
-			samples      = sound_buffer.temp[:],
-			sample_rate  = sound_buffer.sample_rate,
-		}
-		game.update_and_render(game_backbuffer, game_soundbuffer, &input)
+		frames_to_generate := get_samples_to_generate(sound_buffer)
 
-		// Copy from the linear temp buffer into the ring, handling wrap-around.
-		for i in 0 ..< frames_to_generate {
-			dst := ((sound_buffer.write_pos + i) % sound_buffer.ring_cap) * sound_buffer.channels
-			sound_buffer.ring[dst]     = sound_buffer.temp[i * sound_buffer.channels]
-			sound_buffer.ring[dst + 1] = sound_buffer.temp[i * sound_buffer.channels + 1]
-		}
-		intrinsics.atomic_store(&sound_buffer.write_pos, sound_buffer.write_pos + frames_to_generate)
+		game.update_and_render(
+			game.Backbuffer{width = backbuffer.width, height = backbuffer.height, pixels = backbuffer.pixels},
+			game.SoundBuffer{sample_count = frames_to_generate, samples = sound_buffer.temp[:], sample_rate = sound_buffer.sample_rate},
+			&input,
+		)
+		push_audio(sound_buffer, frames_to_generate)
 
 		blit_backbuffer(backbuffer)
 
@@ -291,8 +289,4 @@ main :: proc() {
 
 		rl.EndDrawing()
 	}
-
-	// Stop the stream before main returns so the callback can't fire against
-	// a dead stack frame.
-	rl.StopAudioStream(sound_buffer.stream)
 }
