@@ -1,5 +1,6 @@
 package platform
 
+import "base:intrinsics"
 import "core:log"
 import rl "vendor:raylib"
 
@@ -8,14 +9,51 @@ import "../game"
 width, height :: 960, 540
 FPS :: 60
 
+// One second of audio. Large enough to absorb any frame-rate hiccup
+// (resize, focus loss, etc.) without underrun.
+AUDIO_RING_FRAMES :: 48000
+
+// How far ahead of the audio read cursor we keep the write cursor.
+// Matches Casey's LatencySampleCount = SamplesPerSecond / 15.
+AUDIO_LATENCY_FRAMES :: AUDIO_RING_FRAMES / 15
+
+// Accessed by the audio callback which has no userdata parameter.
+_sound_buffer: ^SoundBuffer
+
 SoundBuffer :: struct {
-	samples:           []i16,
-	sample_rate:       u32,
-	channels:          u32,
-	stream:            rl.AudioStream,
-	write_cursor:      u32, // frames accumulated but not yet pushed
-	frames_per_buffer: u32, // sub-buffer size (frames per push to raylib)
-	push_count:        u32, // total pushes made; used to delay playback start
+	ring:        []i16, // circular buffer; AUDIO_RING_FRAMES * channels samples
+	ring_cap:    u32,   // = AUDIO_RING_FRAMES
+	write_pos:   u32,   // absolute frame count; written by game thread
+	read_pos:    u32,   // absolute frame count; written by audio callback
+	sample_rate: u32,
+	channels:    u32,
+	stream:      rl.AudioStream,
+	temp:        []i16, // scratch buffer; game writes here each frame
+}
+
+// Called by the audio thread whenever it needs more data.
+// Reads from the ring buffer; outputs silence on underrun.
+_audio_callback :: proc "c" (raw_buffer: rawptr, frames: u32) #no_bounds_check {
+	sb := _sound_buffer
+	out := (cast([^]i16)raw_buffer)[:frames * sb.channels]
+
+	write_pos := intrinsics.atomic_load(&sb.write_pos)
+	read_pos := sb.read_pos // only this thread writes read_pos
+
+	available := write_pos - read_pos
+	to_serve := min(frames, available)
+
+	for i in 0 ..< to_serve {
+		src := ((read_pos + i) % sb.ring_cap) * sb.channels
+		out[i * 2]     = sb.ring[src]
+		out[i * 2 + 1] = sb.ring[src + 1]
+	}
+	for i in to_serve ..< frames {
+		out[i * 2]     = 0
+		out[i * 2 + 1] = 0
+	}
+
+	intrinsics.atomic_store(&sb.read_pos, read_pos + to_serve)
 }
 
 Backbuffer :: struct {
@@ -167,57 +205,36 @@ init_sound_buffer :: proc() -> SoundBuffer {
 	channels: u32 = 2
 	sample_size: u32 = 16
 	sample_rate: u32 = 48000
+	ring_cap: u32 = AUDIO_RING_FRAMES
 
-	frames_per_buffer := sample_rate / u32(FPS) * 2
-	samples := make([]i16, sample_rate * channels) // 1 second of audio
-
-	rl.SetAudioStreamBufferSizeDefault(i32(frames_per_buffer))
+	// Callback is invoked roughly once per frame; size the sub-buffer to match.
+	rl.SetAudioStreamBufferSizeDefault(i32(sample_rate / u32(FPS)))
 	stream := rl.LoadAudioStream(sample_rate, sample_size, channels)
-	// PlayAudioStream is called lazily in blit_audio after both sub-buffers are primed.
 
 	return SoundBuffer {
+		ring        = make([]i16, ring_cap * channels),
+		ring_cap    = ring_cap,
 		sample_rate = sample_rate,
-		channels = channels,
-		stream = stream,
-		samples = samples,
-		frames_per_buffer = frames_per_buffer,
+		channels    = channels,
+		stream      = stream,
+		temp        = make([]i16, ring_cap * channels), // same size as ring; more than enough for one frame
 	}
 }
 
-get_samples_to_generate :: proc(sound_buffer: SoundBuffer, seconds_elapsed: f32) -> u32 {
-	samples_to_generate := u32(seconds_elapsed * f32(sound_buffer.sample_rate))
-	// Cap so we never write past the end of the accumulation buffer.
-	// Two sub-buffers worth is a safe maximum — beyond that we'd be
-	// too far behind for smooth audio anyway.
-	max_samples := sound_buffer.frames_per_buffer * 2
-	remaining_capacity := max_samples - min(sound_buffer.write_cursor, max_samples)
-	return clamp(samples_to_generate, 0, remaining_capacity)
-}
-
-blit_audio :: proc(sound_buffer: ^SoundBuffer) {
-	for rl.IsAudioStreamProcessed(sound_buffer.stream) && sound_buffer.write_cursor >= sound_buffer.frames_per_buffer {
-		rl.UpdateAudioStream(
-			sound_buffer.stream,
-			raw_data(sound_buffer.samples),
-			i32(sound_buffer.frames_per_buffer),
-		)
-
-		remaining := sound_buffer.write_cursor - sound_buffer.frames_per_buffer
-		if remaining > 0 {
-			src_start := sound_buffer.frames_per_buffer * sound_buffer.channels
-			copy_len := remaining * sound_buffer.channels
-			// Forward copy is safe since dst < src
-			for i in 0 ..< copy_len {
-				sound_buffer.samples[i] = sound_buffer.samples[src_start + i]
-			}
-		}
-		sound_buffer.write_cursor -= sound_buffer.frames_per_buffer
-		sound_buffer.push_count += 1
+// How many frames to generate this tick.
+// Always writes up to read_pos + LATENCY, like Casey's cursor-based fill.
+// Self-correcting: a late frame finds read_pos has advanced further, so we
+// generate more to catch up — no cumulative drift from delta_time truncation.
+get_samples_to_generate :: proc(sound_buffer: ^SoundBuffer) -> u32 {
+	read_pos := intrinsics.atomic_load(&sound_buffer.read_pos)
+	target_pos := read_pos + AUDIO_LATENCY_FRAMES
+	if sound_buffer.write_pos >= target_pos {
+		return 0
 	}
-	// Delay playback until both sub-buffers have real audio so playback starts cleanly.
-	if !rl.IsAudioStreamPlaying(sound_buffer.stream) && sound_buffer.push_count >= 2 {
-		rl.PlayAudioStream(sound_buffer.stream)
-	}
+	to_write := target_pos - sound_buffer.write_pos
+	buffered := sound_buffer.write_pos - read_pos
+	space := sound_buffer.ring_cap - buffered
+	return min(to_write, space)
 }
 
 main :: proc() {
@@ -232,6 +249,9 @@ main :: proc() {
 	rl.SetTargetFPS(FPS)
 
 	sound_buffer := init_sound_buffer()
+	_sound_buffer = &sound_buffer
+	rl.SetAudioStreamCallback(sound_buffer.stream, _audio_callback)
+	rl.PlayAudioStream(sound_buffer.stream)
 
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
@@ -244,21 +264,24 @@ main :: proc() {
 			pixels = backbuffer.pixels,
 		}
 		input := process_input()
-		frames_to_generate := get_samples_to_generate(sound_buffer, input.delta_time)
-		sample_offset := sound_buffer.write_cursor * sound_buffer.channels
+		frames_to_generate := get_samples_to_generate(&sound_buffer)
 		game_soundbuffer := game.SoundBuffer {
 			sample_count = frames_to_generate,
-			samples      = sound_buffer.samples[sample_offset:],
+			samples      = sound_buffer.temp[:],
 			sample_rate  = sound_buffer.sample_rate,
 		}
 		game.update_and_render(game_backbuffer, game_soundbuffer, &input)
-		sound_buffer.write_cursor += frames_to_generate
+
+		// Copy from the linear temp buffer into the ring, handling wrap-around.
+		for i in 0 ..< frames_to_generate {
+			dst := ((sound_buffer.write_pos + i) % sound_buffer.ring_cap) * sound_buffer.channels
+			sound_buffer.ring[dst]     = sound_buffer.temp[i * sound_buffer.channels]
+			sound_buffer.ring[dst + 1] = sound_buffer.temp[i * sound_buffer.channels + 1]
+		}
+		intrinsics.atomic_store(&sound_buffer.write_pos, sound_buffer.write_pos + frames_to_generate)
 
 		blit_backbuffer(backbuffer)
-		blit_audio(&sound_buffer)
 
-		// Resize happens after audio is pushed so the slow GPU realloc doesn't
-		// delay the next blit_audio call and drain the stream.
 		if rl.IsWindowResized() {
 			new_width := rl.GetScreenWidth()
 			new_height := rl.GetScreenHeight()
@@ -268,4 +291,8 @@ main :: proc() {
 
 		rl.EndDrawing()
 	}
+
+	// Stop the stream before main returns so the callback can't fire against
+	// a dead stack frame.
+	rl.StopAudioStream(sound_buffer.stream)
 }
