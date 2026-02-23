@@ -1,4 +1,4 @@
-package main
+package platform
 
 import "core:log"
 import rl "vendor:raylib"
@@ -8,13 +8,23 @@ import "../game"
 width, height :: 960, 540
 FPS :: 60
 
+SoundBuffer :: struct {
+	samples:           []i16,
+	sample_rate:       u32,
+	channels:          u32,
+	stream:            rl.AudioStream,
+	write_cursor:      u32, // frames accumulated but not yet pushed
+	frames_per_buffer: u32, // sub-buffer size (frames per push to raylib)
+	push_count:        u32, // total pushes made; used to delay playback start
+}
+
 Backbuffer :: struct {
 	width, height: i32,
 	pixels:        []u32,
 	texture:       rl.Texture2D,
 }
 
-make_backbuffer :: proc(width, height: i32) -> Backbuffer {
+init_backbuffer :: proc(width, height: i32) -> Backbuffer {
 	pixels := make([]u32, width * height)
 	texture := rl.LoadTextureFromImage(
 		rl.Image {
@@ -153,27 +163,80 @@ process_input :: proc() -> game.Input {
 	return input
 }
 
+init_sound_buffer :: proc() -> SoundBuffer {
+	channels: u32 = 2
+	sample_size: u32 = 16
+	sample_rate: u32 = 48000
+
+	frames_per_buffer := sample_rate / u32(FPS) * 2
+	samples := make([]i16, sample_rate * channels) // 1 second of audio
+
+	rl.SetAudioStreamBufferSizeDefault(i32(frames_per_buffer))
+	stream := rl.LoadAudioStream(sample_rate, sample_size, channels)
+	// PlayAudioStream is called lazily in blit_audio after both sub-buffers are primed.
+
+	return SoundBuffer {
+		sample_rate = sample_rate,
+		channels = channels,
+		stream = stream,
+		samples = samples,
+		frames_per_buffer = frames_per_buffer,
+	}
+}
+
+get_samples_to_generate :: proc(sound_buffer: SoundBuffer, seconds_elapsed: f32) -> u32 {
+	samples_to_generate := u32(seconds_elapsed * f32(sound_buffer.sample_rate))
+	// Cap so we never write past the end of the accumulation buffer.
+	// Two sub-buffers worth is a safe maximum — beyond that we'd be
+	// too far behind for smooth audio anyway.
+	max_samples := sound_buffer.frames_per_buffer * 2
+	remaining_capacity := max_samples - min(sound_buffer.write_cursor, max_samples)
+	return clamp(samples_to_generate, 0, remaining_capacity)
+}
+
+blit_audio :: proc(sound_buffer: ^SoundBuffer) {
+	for rl.IsAudioStreamProcessed(sound_buffer.stream) && sound_buffer.write_cursor >= sound_buffer.frames_per_buffer {
+		rl.UpdateAudioStream(
+			sound_buffer.stream,
+			raw_data(sound_buffer.samples),
+			i32(sound_buffer.frames_per_buffer),
+		)
+
+		remaining := sound_buffer.write_cursor - sound_buffer.frames_per_buffer
+		if remaining > 0 {
+			src_start := sound_buffer.frames_per_buffer * sound_buffer.channels
+			copy_len := remaining * sound_buffer.channels
+			// Forward copy is safe since dst < src
+			for i in 0 ..< copy_len {
+				sound_buffer.samples[i] = sound_buffer.samples[src_start + i]
+			}
+		}
+		sound_buffer.write_cursor -= sound_buffer.frames_per_buffer
+		sound_buffer.push_count += 1
+	}
+	// Delay playback until both sub-buffers have real audio so playback starts cleanly.
+	if !rl.IsAudioStreamPlaying(sound_buffer.stream) && sound_buffer.push_count >= 2 {
+		rl.PlayAudioStream(sound_buffer.stream)
+	}
+}
+
 main :: proc() {
 	context.logger = log.create_console_logger()
 
 	rl.SetConfigFlags({.WINDOW_RESIZABLE})
 	rl.InitWindow(width, height, "Game - Handmade Raylib")
+	rl.InitAudioDevice()
 
-	backbuffer := make_backbuffer(width, height)
+	backbuffer := init_backbuffer(width, height)
 
 	rl.SetTargetFPS(FPS)
+
+	sound_buffer := init_sound_buffer()
 
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
 
 		rl.ClearBackground(rl.BLACK)
-
-		if rl.IsWindowResized() {
-			new_width := rl.GetScreenWidth()
-			new_height := rl.GetScreenHeight()
-			resize_backbuffer(&backbuffer, new_width, new_height)
-			log.info("Resized backbuffer to %d x %d", new_width, new_height)
-		}
 
 		game_backbuffer := game.Backbuffer {
 			width  = backbuffer.width,
@@ -181,8 +244,27 @@ main :: proc() {
 			pixels = backbuffer.pixels,
 		}
 		input := process_input()
-		game.update_and_render(game_backbuffer, &input)
+		frames_to_generate := get_samples_to_generate(sound_buffer, input.delta_time)
+		sample_offset := sound_buffer.write_cursor * sound_buffer.channels
+		game_soundbuffer := game.SoundBuffer {
+			sample_count = frames_to_generate,
+			samples      = sound_buffer.samples[sample_offset:],
+			sample_rate  = sound_buffer.sample_rate,
+		}
+		game.update_and_render(game_backbuffer, game_soundbuffer, &input)
+		sound_buffer.write_cursor += frames_to_generate
+
 		blit_backbuffer(backbuffer)
+		blit_audio(&sound_buffer)
+
+		// Resize happens after audio is pushed so the slow GPU realloc doesn't
+		// delay the next blit_audio call and drain the stream.
+		if rl.IsWindowResized() {
+			new_width := rl.GetScreenWidth()
+			new_height := rl.GetScreenHeight()
+			resize_backbuffer(&backbuffer, new_width, new_height)
+			log.info("Resized backbuffer to %d x %d", new_width, new_height)
+		}
 
 		rl.EndDrawing()
 	}

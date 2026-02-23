@@ -1,8 +1,17 @@
 package game
 
 import "core:log"
+import "core:math"
+
+tsine: f32 = 0 // TODO: pull this to game state when we have memory
 
 MAX_CONTROLLERS :: 4
+
+SoundBuffer :: struct {
+	sample_count: u32,
+	samples:      []i16,
+	sample_rate:  u32,
+}
 
 Backbuffer :: struct {
 	width, height: i32,
@@ -47,7 +56,20 @@ Input :: struct {
 	controllers:   [MAX_CONTROLLERS + 1]Controller_Input,
 }
 
-update_and_render :: proc(backbuffer: Backbuffer, input: ^Input) {
+output_sine_wave :: proc(sound_buffer: SoundBuffer) {
+	tone_hz: f32 = 256
+	tone_volume: f32 = 3000
+	wave_period := f32(sound_buffer.sample_rate) / tone_hz
+
+	for i in 0 ..< sound_buffer.sample_count {
+		sample_value := i16(math.sin(tsine) * tone_volume)
+		sound_buffer.samples[i * 2] = sample_value
+		sound_buffer.samples[i * 2 + 1] = sample_value
+		tsine += 2.0 * math.PI / wave_period
+	}
+}
+
+update_and_render :: proc(backbuffer: Backbuffer, sound_buffer: SoundBuffer, input: ^Input) {
 	for i in 0 ..< MAX_CONTROLLERS {
 		if input.controllers[i].move_up.ended_down {
 			log.debugf("Controller %d: move up is pressed", i)
@@ -55,6 +77,7 @@ update_and_render :: proc(backbuffer: Backbuffer, input: ^Input) {
 	}
 
 	render_weird_gradient(backbuffer)
+	output_sine_wave(sound_buffer)
 }
 
 render_weird_gradient :: proc(backbuffer: Backbuffer) {
