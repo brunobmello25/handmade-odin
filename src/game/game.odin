@@ -312,8 +312,14 @@ update_and_render :: proc(
 				gray = 0.0
 			}
 
-			tile_left := center_x + f32(rel_col) * tile_side
-			tile_top := center_y - f32(rel_row + 1) * tile_side
+			tile_left :=
+				center_x -
+				world.meters_to_pixels * game_state.player_p.tile_rel_x +
+				f32(rel_col) * tile_side
+			tile_top :=
+				center_y +
+				world.meters_to_pixels * game_state.player_p.tile_rel_y -
+				f32(rel_row + 1) * tile_side
 			draw_rectangle(
 				backbuffer,
 				tile_left,
@@ -328,14 +334,8 @@ update_and_render :: proc(
 	}
 
 	// Player (yellow)
-	player_left :=
-		center_x +
-		world.meters_to_pixels * game_state.player_p.tile_rel_x -
-		0.5 * world.meters_to_pixels * player_width
-	player_top :=
-		center_y -
-		world.meters_to_pixels * game_state.player_p.tile_rel_y -
-		world.meters_to_pixels * player_height
+	player_left := center_x - 0.5 * world.meters_to_pixels * player_width
+	player_top := center_y - world.meters_to_pixels * player_height
 	draw_rectangle(
 		backbuffer,
 		player_left,
