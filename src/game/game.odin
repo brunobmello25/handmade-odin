@@ -25,7 +25,7 @@ Tile_Chunk :: struct {
 World :: struct {
 	chunk_shift:         u32,
 	chunk_mask:          u32,
-	chunk_dim:           u32,
+	chunk_size:          u32,
 	tile_side_in_meters: f32,
 	tile_side_in_pixels: i32,
 	meters_to_pixels:    f32,
@@ -35,6 +35,7 @@ World :: struct {
 }
 
 GameState :: struct {
+	tsine:    f32,
 	player_p: World_Position,
 }
 
@@ -113,13 +114,13 @@ get_tile_chunk :: proc(world: ^World, chunk_x, chunk_y: u32) -> ^Tile_Chunk {
 
 get_tile_value_unchecked :: proc(world: ^World, chunk: ^Tile_Chunk, tile_x, tile_y: u32) -> u32 {
 	assert(chunk != nil)
-	assert(tile_x < world.chunk_dim)
-	assert(tile_y < world.chunk_dim)
-	return chunk.tiles[tile_y * world.chunk_dim + tile_x]
+	assert(tile_x < world.chunk_size)
+	assert(tile_y < world.chunk_size)
+	return chunk.tiles[tile_y * world.chunk_size + tile_x]
 }
 
 get_tile_value_from_chunk :: proc(world: ^World, chunk: ^Tile_Chunk, tile_x, tile_y: u32) -> u32 {
-	if chunk == nil || tile_x >= world.chunk_dim || tile_y >= world.chunk_dim {
+	if chunk == nil || tile_x >= world.chunk_size || tile_y >= world.chunk_size {
 		return 0
 	}
 	return get_tile_value_unchecked(world, chunk, tile_x, tile_y)
@@ -171,6 +172,29 @@ draw_rectangle :: proc(buffer: Backbuffer, real_min_x, real_min_y, real_max_x, r
 	}
 }
 
+ENABLE_SINE_WAVE :: false
+
+output_sound :: proc(sound_buffer: SoundBuffer, game_state: ^GameState) {
+	if sound_buffer.sample_count == 0 {return}
+
+	tone_hz := 256
+	wave_period := f32(sound_buffer.sample_rate) / f32(tone_hz)
+
+	for i in 0 ..< sound_buffer.sample_count {
+		sample_value: i16 = 0
+		when ENABLE_SINE_WAVE {
+			tone_volume: f32 = 3000
+			sample_value = i16(math.sin(game_state.tsine) * tone_volume)
+		}
+		sound_buffer.samples[i * 2] = sample_value
+		sound_buffer.samples[i * 2 + 1] = sample_value
+		game_state.tsine += 2.0 * math.PI / wave_period
+		if game_state.tsine > 2.0 * math.PI {
+			game_state.tsine -= 2.0 * math.PI
+		}
+	}
+}
+
 update_and_render :: proc(
 	memory: ^Memory,
 	backbuffer: Backbuffer,
@@ -181,7 +205,7 @@ update_and_render :: proc(
 	game_state := cast(^GameState)memory.permanent_storage
 
 	// Tile data — same layout as C++ Day 33. Exactly 9 rows × 24 cols; rest of the
-	// 32×32 chunk is zero-initialized (empty/walkable). chunk_dim=32 (2^5) fits all data.
+	// 32×32 chunk is zero-initialized (empty/walkable). chunk_size=32 (2^5) fits all data.
 	room: [9][24]u32 = {
 		{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
 		{1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1},
@@ -206,7 +230,7 @@ update_and_render :: proc(
 	world: World
 	world.chunk_shift = 5
 	world.chunk_mask = 0x1F
-	world.chunk_dim = 32
+	world.chunk_size = 32 // C++ uses 256; 32 used here due to Odin array literal constraints
 	world.tile_side_in_meters = 1.4
 	world.tile_side_in_pixels = 60
 	world.meters_to_pixels = f32(world.tile_side_in_pixels) / world.tile_side_in_meters
@@ -215,6 +239,7 @@ update_and_render :: proc(
 	world.tile_chunks = cast([^]Tile_Chunk)(&chunk)
 
 	if !memory.is_initialized {
+		game_state.tsine = 0.0
 		game_state.player_p.abs_tile_x = 3
 		game_state.player_p.abs_tile_y = 3
 		game_state.player_p.tile_rel_x = 0.1
@@ -259,11 +284,7 @@ update_and_render :: proc(
 		}
 	}
 
-	// Silence
-	for i in 0 ..< sound_buffer.sample_count {
-		sound_buffer.samples[i * 2] = 0
-		sound_buffer.samples[i * 2 + 1] = 0
-	}
+	output_sound(sound_buffer, game_state)
 
 	// Background (dark red)
 	draw_rectangle(backbuffer, 0, 0, f32(backbuffer.width), f32(backbuffer.height), 1.0, 0.0, 0.1)
