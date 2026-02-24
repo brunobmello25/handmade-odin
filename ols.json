@@ -1,0 +1,5 @@
+{
+    "enable_debug": true,
+    "odin_command": "odin",
+    "checker_args": "-debug"
+}
