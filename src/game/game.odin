@@ -66,8 +66,7 @@ Input :: struct {
 	controllers:   [MAX_CONTROLLERS + 1]Controller_Input,
 }
 
-output_sine_wave :: proc(tsine: ^f32, sound_buffer: SoundBuffer) {
-	tone_hz: f32 = 256
+output_sine_wave :: proc(tone_hz: f32, tsine: ^f32, sound_buffer: SoundBuffer) {
 	tone_volume: f32 = 3000
 	wave_period := f32(sound_buffer.sample_rate) / tone_hz
 
@@ -96,7 +95,11 @@ update_and_render :: proc(
 	}
 
 	render_weird_gradient(backbuffer)
-	output_sine_wave(&game_state.tsine, sound_buffer)
+	tone_hz := f32(256.0)
+	if input.controllers[0].move_up.ended_down {
+		tone_hz = 512.0
+	}
+	output_sine_wave(tone_hz, &game_state.tsine, sound_buffer)
 }
 
 render_weird_gradient :: proc(backbuffer: Backbuffer) {
