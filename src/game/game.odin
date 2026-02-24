@@ -100,8 +100,8 @@ get_chunk_position_for :: proc(world: ^World, abs_tile_x, abs_tile_y: u32) -> Ti
 	return Tile_Chunk_Position {
 		tile_chunk_x = abs_tile_x >> world.chunk_shift,
 		tile_chunk_y = abs_tile_y >> world.chunk_shift,
-		rel_tile_x   = abs_tile_x & world.chunk_mask,
-		rel_tile_y   = abs_tile_y & world.chunk_mask,
+		rel_tile_x = abs_tile_x & world.chunk_mask,
+		rel_tile_y = abs_tile_y & world.chunk_mask,
 	}
 }
 
@@ -151,7 +151,10 @@ recanonical_position :: proc(world: ^World, pos: World_Position) -> World_Positi
 	return result
 }
 
-draw_rectangle :: proc(buffer: Backbuffer, real_min_x, real_min_y, real_max_x, real_max_y, r, g, b: f32) {
+draw_rectangle :: proc(
+	buffer: Backbuffer,
+	real_min_x, real_min_y, real_max_x, real_max_y, r, g, b: f32,
+) {
 	min_x := i32(math.round(real_min_x))
 	min_y := i32(math.round(real_min_y))
 	max_x := i32(math.round(real_max_x))
@@ -204,8 +207,8 @@ update_and_render :: proc(
 	assert(size_of(GameState) <= memory.permanent_storage_size)
 	game_state := cast(^GameState)memory.permanent_storage
 
-	// Tile data — same layout as C++ Day 33. Exactly 9 rows × 24 cols; rest of the
-	// 32×32 chunk is zero-initialized (empty/walkable). chunk_size=32 (2^5) fits all data.
+	// Tile data — same layout as C++ Day 33. Exactly 9 rows × 24 cols specified;
+	// the 256×256 chunk is zero-initialized (empty/walkable) beyond those bounds.
 	room: [9][24]u32 = {
 		{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
 		{1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1},
@@ -217,7 +220,7 @@ update_and_render :: proc(
 		{1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1},
 		{1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
 	}
-	tiles00: [32][32]u32 // zero-initialized; rows/cols beyond room data stay walkable
+	tiles00: [256][256]u32 // zero-initialized; rows/cols beyond room data stay walkable
 	for y in 0 ..< 9 {
 		for x in 0 ..< 24 {
 			tiles00[y][x] = room[y][x]
@@ -228,9 +231,9 @@ update_and_render :: proc(
 	chunk.tiles = cast([^]u32)(&tiles00[0][0])
 
 	world: World
-	world.chunk_shift = 5
-	world.chunk_mask = 0x1F
-	world.chunk_size = 32 // C++ uses 256; 32 used here due to Odin array literal constraints
+	world.chunk_shift = 8
+	world.chunk_mask = 0xFF
+	world.chunk_size = 256
 	world.tile_side_in_meters = 1.4
 	world.tile_side_in_pixels = 60
 	world.meters_to_pixels = f32(world.tile_side_in_pixels) / world.tile_side_in_meters
@@ -311,7 +314,16 @@ update_and_render :: proc(
 
 			tile_left := center_x + f32(rel_col) * tile_side
 			tile_top := center_y - f32(rel_row + 1) * tile_side
-			draw_rectangle(backbuffer, tile_left, tile_top, tile_left + tile_side, tile_top + tile_side, gray, gray, gray)
+			draw_rectangle(
+				backbuffer,
+				tile_left,
+				tile_top,
+				tile_left + tile_side,
+				tile_top + tile_side,
+				gray,
+				gray,
+				gray,
+			)
 		}
 	}
 
