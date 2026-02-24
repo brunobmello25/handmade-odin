@@ -15,22 +15,23 @@ FPS :: 60
 // (resize, focus loss, etc.) without underrun.
 AUDIO_RING_FRAMES :: 48000
 
-// How far ahead of the audio read cursor we keep the write cursor.
-// Matches Casey's LatencySampleCount = SamplesPerSecond / 15.
-AUDIO_LATENCY_FRAMES :: AUDIO_RING_FRAMES / 15
+// Safety margin: keep this many callback-periods buffered ahead of the read cursor.
+// 4 gives one full extra period of slack before any underrun is possible.
+AUDIO_LATENCY_PERIODS :: 4
 
 // Accessed by the audio callback which has no userdata parameter.
 _sound_buffer: ^SoundBuffer
 
 SoundBuffer :: struct {
-	ring:        []i16, // circular buffer; AUDIO_RING_FRAMES * channels samples
-	ring_cap:    u32, // = AUDIO_RING_FRAMES
-	write_pos:   u32, // absolute frame count; written by game thread
-	read_pos:    u32, // absolute frame count; written by audio callback
-	sample_rate: u32,
-	channels:    u32,
-	stream:      rl.AudioStream,
-	temp:        []i16, // scratch buffer; game writes here each frame
+	ring:           []i16, // circular buffer; AUDIO_RING_FRAMES * channels samples
+	ring_cap:       u32, // = AUDIO_RING_FRAMES
+	write_pos:      u32, // absolute frame count; written by game thread
+	read_pos:       u32, // absolute frame count; written by audio callback
+	latency_frames: u32, // detected from first callback; latency = callback_size * AUDIO_LATENCY_PERIODS
+	sample_rate:    u32,
+	channels:       u32,
+	stream:         rl.AudioStream,
+	temp:           []i16, // scratch buffer; game writes here each frame
 }
 
 // Called by the audio thread whenever it needs more data.
@@ -38,6 +39,12 @@ SoundBuffer :: struct {
 _audio_callback :: proc "c" (raw_buffer: rawptr, frames: u32) #no_bounds_check {
 	sb := _sound_buffer
 	out := (cast([^]i16)raw_buffer)[:frames * sb.channels]
+
+	// Detect actual callback size on first call and derive a safe latency from it.
+	// SetAudioStreamBufferSizeDefault is a request; the hardware may enforce a larger period.
+	if sb.latency_frames == 0 {
+		intrinsics.atomic_store(&sb.latency_frames, frames * AUDIO_LATENCY_PERIODS)
+	}
 
 	write_pos := intrinsics.atomic_load(&sb.write_pos)
 	read_pos := sb.read_pos // only this thread writes read_pos
@@ -239,12 +246,16 @@ push_audio :: proc(sb: ^SoundBuffer, frames: u32) #no_bounds_check {
 }
 
 // How many frames to generate this tick.
-// Always writes up to read_pos + LATENCY, like Casey's cursor-based fill.
+// Always writes up to read_pos + latency_frames (derived from actual callback size).
 // Self-correcting: a late frame finds read_pos has advanced further, so we
 // generate more to catch up — no cumulative drift from delta_time truncation.
 get_samples_to_generate :: proc(sound_buffer: ^SoundBuffer) -> u32 {
+	latency := intrinsics.atomic_load(&sound_buffer.latency_frames)
+	if latency == 0 {
+		return 0 // wait for first callback to detect actual hardware period
+	}
 	read_pos := intrinsics.atomic_load(&sound_buffer.read_pos)
-	target_pos := read_pos + AUDIO_LATENCY_FRAMES
+	target_pos := read_pos + latency
 	if sound_buffer.write_pos >= target_pos {
 		return 0
 	}
