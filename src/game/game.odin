@@ -157,7 +157,7 @@ update_and_render :: proc(
 
 	if !memory.is_initialized {
 		game_state.tsine = 0.0
-		game_state.player_p.abs_tile_x = 3
+		game_state.player_p.abs_tile_x = 1
 		game_state.player_p.abs_tile_y = 3
 		game_state.player_p.tile_rel_x = 0.1
 		game_state.player_p.tile_rel_y = 0.1
@@ -191,6 +191,30 @@ update_and_render :: proc(
 					[]u32,
 					tilemap.chunk_size * tilemap.chunk_size,
 				)
+			}
+		}
+
+		{
+			// TODO(bruno): entender por que casey faz essas inicializações com 17 e 9, e 32 screens. Tirou do cu?
+			tiles_per_width := 17
+			tiles_per_height := 9
+			for screen_y in 0 ..< 32 {
+				for screen_x in 0 ..< 32 {
+					for tile_y in 0 ..< tiles_per_height {
+						for tile_x in 0 ..< tiles_per_width {
+							abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
+							abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
+
+							banana := true ? 1 : 2
+							set_tile_value(
+								tilemap,
+								abs_tile_x,
+								abs_tile_y,
+								bool(tile_x == tile_y) && bool(tile_y % 2) ? 1 : 0,
+							)
+						}
+					}
+				}
 			}
 		}
 

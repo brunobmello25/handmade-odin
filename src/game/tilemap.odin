@@ -77,6 +77,19 @@ get_tile_value :: proc(tilemap: ^Tilemap, abs_tile_x, abs_tile_y: u32) -> u32 {
 	return get_tile_value_from_chunk(tilemap, chunk, chunk_pos.rel_tile_x, chunk_pos.rel_tile_y)
 }
 
+set_tile_value :: proc(tilemap: ^Tilemap, abs_tile_x, abs_tile_y: u32, value: u32) {
+	chunk_pos := get_chunk_position_for(tilemap, abs_tile_x, abs_tile_y)
+	chunk := get_tile_chunk(tilemap, chunk_pos.tile_chunk_x, chunk_pos.tile_chunk_y)
+
+	assert(chunk != nil)
+	assert(chunk_pos.rel_tile_x < tilemap.chunk_size)
+	assert(chunk_pos.rel_tile_y < tilemap.chunk_size)
+	assert(chunk_pos.tile_chunk_x < u32(tilemap.tile_chunk_count_x))
+	assert(chunk_pos.tile_chunk_y < u32(tilemap.tile_chunk_count_y))
+
+	chunk.tiles[chunk_pos.rel_tile_y * tilemap.chunk_size + chunk_pos.rel_tile_x] = value
+}
+
 is_world_point_empty :: proc(tilemap: ^Tilemap, pos: Tilemap_Position) -> bool {
 	return get_tile_value(tilemap, pos.abs_tile_x, pos.abs_tile_y) == 0
 }
