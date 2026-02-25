@@ -2,6 +2,7 @@ package game
 
 import "core:log"
 import "core:math"
+import "core:math/rand"
 import "core:mem"
 
 _ :: log
@@ -153,7 +154,6 @@ update_and_render :: proc(
 ) {
 	assert(size_of(GameState) <= memory.permanent_storage_size)
 	game_state := cast(^GameState)memory.permanent_storage
-	context.allocator = mem.arena_allocator(&game_state.world_arena)
 
 	if !memory.is_initialized {
 		game_state.tsine = 0.0
@@ -164,33 +164,50 @@ update_and_render :: proc(
 
 		initialize_arena(&game_state.world_arena, memory, size_of(GameState))
 
-		game_state.world = new(World)
-		world := game_state.world
-		world.tilemap = new(Tilemap)
+		game_state.world = cast(^World)(mem.arena_alloc(
+				&game_state.world_arena,
+				size_of(World),
+			) or_else panic("outofmemory"))
+
+		game_state.world.tilemap = cast(^Tilemap)(mem.arena_alloc(
+				&game_state.world_arena,
+				size_of(Tilemap),
+			) or_else panic("outofmemory"))
+
 		when ODIN_DEBUG {
 			assert(is_in_permanent_storage(memory, game_state.world))
-			assert(is_in_permanent_storage(memory, world.tilemap))
+			assert(is_in_permanent_storage(memory, game_state.world.tilemap))
 		}
+
+		world := game_state.world
 		tilemap := world.tilemap
 
 		tilemap.chunk_shift = 4
 		tilemap.chunk_mask = (1 << tilemap.chunk_shift) - 1
 		tilemap.chunk_size = (1 << tilemap.chunk_shift)
 		tilemap.tile_side_in_meters = 1.4
-		tilemap.tile_side_in_pixels = 60
+		tilemap.tile_side_in_pixels = 6
 		tilemap.meters_to_pixels = f32(tilemap.tile_side_in_pixels) / tilemap.tile_side_in_meters
 		tilemap.tile_chunk_count_x = 128
 		tilemap.tile_chunk_count_y = 128
-		tilemap.tile_chunks = make(
-			[]Tilemap_Chunk,
-			tilemap.tile_chunk_count_x * tilemap.tile_chunk_count_y,
+
+		size := int(
+			size_of(Tilemap_Chunk) * tilemap.tile_chunk_count_y * tilemap.tile_chunk_count_x,
 		)
+		tilemap.tile_chunks = (cast([^]Tilemap_Chunk)(mem.arena_alloc(
+					&game_state.world_arena,
+					size,
+				) or_else panic("out of memory")))[:size]
+
+
 		for y in 0 ..< tilemap.tile_chunk_count_y {
 			for x in 0 ..< tilemap.tile_chunk_count_x {
-				tilemap.tile_chunks[y * tilemap.tile_chunk_count_x + x].tiles = make(
-					[]u32,
-					tilemap.chunk_size * tilemap.chunk_size,
-				)
+				idx := y * tilemap.tile_chunk_count_x + x
+				size := int(tilemap.chunk_size * tilemap.chunk_size * size_of(u32))
+				tilemap.tile_chunks[idx].tiles = (cast([^]u32)(mem.arena_alloc(
+							&game_state.world_arena,
+							size,
+						) or_else panic("out of memory")))[:size]
 			}
 		}
 
@@ -198,29 +215,35 @@ update_and_render :: proc(
 			// TODO(bruno): entender por que casey faz essas inicializações com 17 e 9, e 32 screens. Tirou do cu?
 			tiles_per_width := 17
 			tiles_per_height := 9
-			for screen_y in 0 ..< 32 {
-				for screen_x in 0 ..< 32 {
-					for tile_y in 0 ..< tiles_per_height {
-						for tile_x in 0 ..< tiles_per_width {
-							abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
-							abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
 
-							tile_value := 0
-							if tile_x == 0 ||
-							   tile_x == tiles_per_width - 1 ||
-							   tile_y == 0 ||
-							   tile_y == tiles_per_height - 1 {
+			screen_x, screen_y := 0, 0
+			for screen_index in 0 ..< 100 {
+				for tile_y in 0 ..< tiles_per_height {
+					for tile_x in 0 ..< tiles_per_width {
+						abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
+						abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
+
+						tile_value := 1
+						if tile_x == 0 ||
+						   tile_x == tiles_per_width - 1 ||
+						   tile_y == 0 ||
+						   tile_y == tiles_per_height - 1 {
+							tile_value = 2
+
+							if tile_y == tiles_per_height / 2 || tile_x == tiles_per_width / 2 {
 								tile_value = 1
-
-								if tile_y == tiles_per_height / 2 ||
-								   tile_x == tiles_per_width / 2 {
-									tile_value = 0
-								}
 							}
-
-							set_tile_value(tilemap, abs_tile_x, abs_tile_y, u32(tile_value))
 						}
+
+						set_tile_value(tilemap, abs_tile_x, abs_tile_y, u32(tile_value))
 					}
+				}
+
+				choices: [2]u32 = {0, 1}
+				if rand.choice(choices[:]) == 0 {
+					screen_x += 1
+				} else {
+					screen_y += 1
 				}
 			}
 		}
@@ -277,32 +300,34 @@ update_and_render :: proc(
 	center_y := 0.5 * f32(backbuffer.height)
 
 
-	for rel_row in -10 ..< 10 {
-		for rel_col in -20 ..< 20 {
+	for rel_row in -100 ..< 100 {
+		for rel_col in -200 ..< 200 {
 			col := u32(i32(game_state.player_p.abs_tile_x) + i32(rel_col))
 			row := u32(i32(game_state.player_p.abs_tile_y) + i32(rel_row))
 
 			tile_id := get_tile_value(tilemap, col, row)
 
-			gray: f32 = 0.5
-			if tile_id == 1 {
-				gray = 1.0
-			}
-			if col == game_state.player_p.abs_tile_x && row == game_state.player_p.abs_tile_y {
-				gray = 0.0
-			}
+			if tile_id > 0 {
+				gray: f32 = 0.5
+				if tile_id == 2 {
+					gray = 1.0
+				}
+				if col == game_state.player_p.abs_tile_x && row == game_state.player_p.abs_tile_y {
+					gray = 0.0
+				}
 
-			min_x :=
-				center_x -
-				tilemap.meters_to_pixels * game_state.player_p.tile_rel_x +
-				(f32(rel_col) - 0.5) * f32(tilemap.tile_side_in_pixels)
-			min_y :=
-				center_y +
-				tilemap.meters_to_pixels * game_state.player_p.tile_rel_y -
-				f32(rel_row) * f32(tilemap.tile_side_in_pixels)
-			max_x := min_x + f32(tilemap.tile_side_in_pixels)
-			max_y := min_y - f32(tilemap.tile_side_in_pixels)
-			draw_rectangle(backbuffer, min_x, max_y, max_x, min_y, gray, gray, gray)
+				min_x :=
+					center_x -
+					tilemap.meters_to_pixels * game_state.player_p.tile_rel_x +
+					(f32(rel_col) - 0.5) * f32(tilemap.tile_side_in_pixels)
+				min_y :=
+					center_y +
+					tilemap.meters_to_pixels * game_state.player_p.tile_rel_y -
+					f32(rel_row) * f32(tilemap.tile_side_in_pixels)
+				max_x := min_x + f32(tilemap.tile_side_in_pixels)
+				max_y := min_y - f32(tilemap.tile_side_in_pixels)
+				draw_rectangle(backbuffer, min_x, max_y, max_x, min_y, gray, gray, gray)
+			}
 		}
 	}
 

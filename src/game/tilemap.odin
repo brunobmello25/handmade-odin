@@ -91,5 +91,5 @@ set_tile_value :: proc(tilemap: ^Tilemap, abs_tile_x, abs_tile_y: u32, value: u3
 }
 
 is_world_point_empty :: proc(tilemap: ^Tilemap, pos: Tilemap_Position) -> bool {
-	return get_tile_value(tilemap, pos.abs_tile_x, pos.abs_tile_y) == 0
+	return get_tile_value(tilemap, pos.abs_tile_x, pos.abs_tile_y) == 1
 }
