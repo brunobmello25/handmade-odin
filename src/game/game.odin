@@ -205,13 +205,20 @@ update_and_render :: proc(
 							abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
 							abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
 
-							banana := true ? 1 : 2
-							set_tile_value(
-								tilemap,
-								abs_tile_x,
-								abs_tile_y,
-								bool(tile_x == tile_y) && bool(tile_y % 2) ? 1 : 0,
-							)
+							tile_value := 0
+							if tile_x == 0 ||
+							   tile_x == tiles_per_width - 1 ||
+							   tile_y == 0 ||
+							   tile_y == tiles_per_height - 1 {
+								tile_value = 1
+
+								if tile_y == tiles_per_height / 2 ||
+								   tile_x == tiles_per_width / 2 {
+									tile_value = 0
+								}
+							}
+
+							set_tile_value(tilemap, abs_tile_x, abs_tile_y, u32(tile_value))
 						}
 					}
 				}
