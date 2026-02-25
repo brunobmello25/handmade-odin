@@ -173,14 +173,14 @@ update_and_render :: proc(
 		}
 		tilemap := world.tilemap
 
-		tilemap.chunk_shift = 8
-		tilemap.chunk_mask = 0xFF
-		tilemap.chunk_size = 256
+		tilemap.chunk_shift = 4
+		tilemap.chunk_mask = (1 << tilemap.chunk_shift) - 1
+		tilemap.chunk_size = (1 << tilemap.chunk_shift)
 		tilemap.tile_side_in_meters = 1.4
 		tilemap.tile_side_in_pixels = 60
 		tilemap.meters_to_pixels = f32(tilemap.tile_side_in_pixels) / tilemap.tile_side_in_meters
-		tilemap.tile_chunk_count_x = 4
-		tilemap.tile_chunk_count_y = 4
+		tilemap.tile_chunk_count_x = 128
+		tilemap.tile_chunk_count_y = 128
 		tilemap.tile_chunks = make(
 			[]Tilemap_Chunk,
 			tilemap.tile_chunk_count_x * tilemap.tile_chunk_count_y,
@@ -230,7 +230,7 @@ update_and_render :: proc(
 	for i in 0 ..< MAX_CONTROLLERS {
 		controller := &input.controllers[i]
 		if !controller.is_analog {
-			speed := 5.0 * input.delta_time
+			speed := 10.0 * input.delta_time
 			d_player_x: f32 = 0.0
 			d_player_y: f32 = 0.0
 			if controller.move_up.ended_down {d_player_y = 1.0}
