@@ -144,6 +144,7 @@ initialize_arena :: proc(arena: ^mem.Arena, memory: ^Memory, already_used: int) 
 	arena.data = (cast([^]u8)base)[:size]
 }
 
+
 update_and_render :: proc(
 	memory: ^Memory,
 	backbuffer: Backbuffer,
@@ -166,6 +167,10 @@ update_and_render :: proc(
 		game_state.world = new(World)
 		world := game_state.world
 		world.tilemap = new(Tilemap)
+		when ODIN_DEBUG {
+			assert(is_in_permanent_storage(memory, game_state.world))
+			assert(is_in_permanent_storage(memory, world.tilemap))
+		}
 		tilemap := world.tilemap
 
 		tilemap.chunk_shift = 8
@@ -283,4 +288,12 @@ update_and_render :: proc(
 		1.0,
 		0.0,
 	)
+}
+
+when ODIN_DEBUG {
+	is_in_permanent_storage :: proc(memory: ^Memory, ptr: rawptr) -> bool {
+		base := uintptr(memory.permanent_storage)
+		p := uintptr(ptr)
+		return p >= base && p < base + uintptr(memory.permanent_storage_size)
+	}
 }
