@@ -1,5 +1,6 @@
 package game
 
+import "core:log"
 import "core:math"
 
 MAX_CONTROLLERS :: 4
@@ -137,11 +138,11 @@ is_world_point_empty :: proc(world: ^World, pos: World_Position) -> bool {
 }
 
 recanonical_coord :: proc(world: ^World, tile: ^u32, tile_rel: ^f32) {
-	offset := i32(math.floor(tile_rel^ / world.tile_side_in_meters))
+	offset := i32(math.round(tile_rel^ / world.tile_side_in_meters))
 	tile^ = u32(i32(tile^) + offset)
 	tile_rel^ -= f32(offset) * world.tile_side_in_meters
-	assert(tile_rel^ >= 0)
-	assert(tile_rel^ <= world.tile_side_in_meters)
+	assert(tile_rel^ >= -0.5 * world.tile_side_in_meters)
+	assert(tile_rel^ <= 0.5 * world.tile_side_in_meters)
 }
 
 recanonical_position :: proc(world: ^World, pos: World_Position) -> World_Position {
@@ -294,9 +295,8 @@ update_and_render :: proc(
 
 	center_x := 0.5 * f32(backbuffer.width)
 	center_y := 0.5 * f32(backbuffer.height)
-	tile_side := f32(world.tile_side_in_pixels)
 
-	// Tilemap centered on player. rel_row > 0 = above center on screen (Y-down coords).
+
 	for rel_row in -10 ..< 10 {
 		for rel_col in -20 ..< 20 {
 			col := u32(i32(game_state.player_p.abs_tile_x) + i32(rel_col))
@@ -312,24 +312,17 @@ update_and_render :: proc(
 				gray = 0.0
 			}
 
-			tile_left :=
+			min_x :=
 				center_x -
 				world.meters_to_pixels * game_state.player_p.tile_rel_x +
-				f32(rel_col) * tile_side
-			tile_top :=
+				(f32(rel_col) - 0.5) * f32(world.tile_side_in_pixels)
+			min_y :=
 				center_y +
 				world.meters_to_pixels * game_state.player_p.tile_rel_y -
-				f32(rel_row + 1) * tile_side
-			draw_rectangle(
-				backbuffer,
-				tile_left,
-				tile_top,
-				tile_left + tile_side,
-				tile_top + tile_side,
-				gray,
-				gray,
-				gray,
-			)
+				f32(rel_row) * f32(world.tile_side_in_pixels)
+			max_x := min_x + f32(world.tile_side_in_pixels)
+			max_y := min_y - f32(world.tile_side_in_pixels)
+			draw_rectangle(backbuffer, min_x, max_y, max_x, min_y, gray, gray, gray)
 		}
 	}
 
