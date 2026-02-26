@@ -148,6 +148,7 @@ update_and_render :: proc(
 	backbuffer: Backbuffer,
 	sound_buffer: SoundBuffer,
 	input: ^Input,
+	platform_procedures: Platform_Procedures,
 ) {
 	assert(size_of(GameState) <= memory.permanent_storage_size)
 	game_state := cast(^GameState)memory.permanent_storage
@@ -307,6 +308,8 @@ update_and_render :: proc(
 			}
 		}
 
+		load_bpm(platform_procedures)
+
 		memory.is_initialized = true
 	}
 
@@ -427,6 +430,21 @@ update_and_render :: proc(
 		1.0,
 		0.0,
 	)
+}
+
+when ODIN_DEBUG {
+	load_bpm :: proc(platform_procedures: Platform_Procedures) {
+		contents := platform_procedures.read_entire_file("data/test/test_background.bmp")
+	}
+}
+
+when ODIN_DEBUG {
+	Platform_Procedures :: struct {
+		read_entire_file: proc(name: string) -> []byte,
+	}
+
+} else {
+	Platform_Procedures :: struct {}
 }
 
 when ODIN_DEBUG {
