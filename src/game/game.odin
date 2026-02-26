@@ -78,21 +78,6 @@ Input :: struct {
 	controllers:   [MAX_CONTROLLERS + 1]Controller_Input,
 }
 
-recanonical_coord :: proc(tilemap: ^Tilemap, tile: ^u32, tile_rel: ^f32) {
-	offset := i32(math.round(tile_rel^ / tilemap.tile_side_in_meters))
-	tile^ = u32(i32(tile^) + offset)
-	tile_rel^ -= f32(offset) * tilemap.tile_side_in_meters
-	assert(tile_rel^ >= -0.5 * tilemap.tile_side_in_meters)
-	assert(tile_rel^ <= 0.5 * tilemap.tile_side_in_meters)
-}
-
-recanonical_position :: proc(tilemap: ^Tilemap, pos: Tilemap_Position) -> Tilemap_Position {
-	result := pos
-	recanonical_coord(tilemap, &result.abs_tile_x, &result.tile_rel_x)
-	recanonical_coord(tilemap, &result.abs_tile_y, &result.tile_rel_y)
-	return result
-}
-
 draw_rectangle :: proc(
 	buffer: Backbuffer,
 	real_min_x, real_min_y, real_max_x, real_max_y, r, g, b: f32,
@@ -407,9 +392,9 @@ update_and_render :: proc(
 
 			if tile_id > 0 {
 				gray: f32 = 0.5
-				if tile_id == 2 {gray = 1.0} // wall
-				if tile_id == 3 {gray = 0.3} // stair up (darker)
-				if tile_id == 4 {gray = 0.7} // stair down (lighter)
+				if tile_id == 2 {gray = 1.0} 	// wall
+				if tile_id == 3 {gray = 0.3} 	// stair up (darker)
+				if tile_id == 4 {gray = 0.7} 	// stair down (lighter)
 				if col == game_state.player_p.abs_tile_x && row == game_state.player_p.abs_tile_y {
 					gray = 0.0
 				}

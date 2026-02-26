@@ -1,5 +1,6 @@
 package game
 
+import "core:math"
 import "core:mem"
 
 Tilemap :: struct {
@@ -41,8 +42,8 @@ get_chunk_position_for :: proc(
 		tile_chunk_x = abs_tile_x >> tilemap.chunk_shift,
 		tile_chunk_y = abs_tile_y >> tilemap.chunk_shift,
 		tile_chunk_z = abs_tile_z,
-		rel_tile_x   = abs_tile_x & tilemap.chunk_mask,
-		rel_tile_y   = abs_tile_y & tilemap.chunk_mask,
+		rel_tile_x = abs_tile_x & tilemap.chunk_mask,
+		rel_tile_y = abs_tile_y & tilemap.chunk_mask,
 	}
 }
 
@@ -131,4 +132,23 @@ set_tile_value :: proc(
 is_world_point_empty :: proc(tilemap: ^Tilemap, pos: Tilemap_Position) -> bool {
 	value := get_tile_value(tilemap, pos.abs_tile_x, pos.abs_tile_y, pos.abs_tile_z)
 	return value == 1 || value == 3 || value == 4
+}
+
+
+/////////////////////////////////////////////////////////////////////////
+// TODO: move these two methos outside tile stuff
+
+recanonical_coord :: proc(tilemap: ^Tilemap, tile: ^u32, tile_rel: ^f32) {
+	offset := i32(math.round(tile_rel^ / tilemap.tile_side_in_meters))
+	tile^ = u32(i32(tile^) + offset)
+	tile_rel^ -= f32(offset) * tilemap.tile_side_in_meters
+	assert(tile_rel^ >= -0.5 * tilemap.tile_side_in_meters)
+	assert(tile_rel^ <= 0.5 * tilemap.tile_side_in_meters)
+}
+
+recanonical_position :: proc(tilemap: ^Tilemap, pos: Tilemap_Position) -> Tilemap_Position {
+	result := pos
+	recanonical_coord(tilemap, &result.abs_tile_x, &result.tile_rel_x)
+	recanonical_coord(tilemap, &result.abs_tile_y, &result.tile_rel_y)
+	return result
 }
