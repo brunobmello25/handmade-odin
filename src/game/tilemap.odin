@@ -1,5 +1,7 @@
 package game
 
+import "core:mem"
+
 Tilemap :: struct {
 	chunk_shift:         u32,
 	chunk_mask:          u32,
@@ -73,11 +75,22 @@ get_tile_value_from_chunk :: proc(
 
 get_tile_value :: proc(tilemap: ^Tilemap, abs_tile_x, abs_tile_y: u32) -> u32 {
 	chunk_pos := get_chunk_position_for(tilemap, abs_tile_x, abs_tile_y)
+
 	chunk := get_tile_chunk(tilemap, chunk_pos.tile_chunk_x, chunk_pos.tile_chunk_y)
+
+	if (chunk == nil || chunk.tiles == nil) {
+		return 0
+	}
+
 	return get_tile_value_from_chunk(tilemap, chunk, chunk_pos.rel_tile_x, chunk_pos.rel_tile_y)
 }
 
-set_tile_value :: proc(tilemap: ^Tilemap, abs_tile_x, abs_tile_y: u32, value: u32) {
+set_tile_value :: proc(
+	arena: ^mem.Arena,
+	tilemap: ^Tilemap,
+	abs_tile_x, abs_tile_y: u32,
+	value: u32,
+) {
 	chunk_pos := get_chunk_position_for(tilemap, abs_tile_x, abs_tile_y)
 	chunk := get_tile_chunk(tilemap, chunk_pos.tile_chunk_x, chunk_pos.tile_chunk_y)
 
@@ -86,6 +99,14 @@ set_tile_value :: proc(tilemap: ^Tilemap, abs_tile_x, abs_tile_y: u32, value: u3
 	assert(chunk_pos.rel_tile_y < tilemap.chunk_size)
 	assert(chunk_pos.tile_chunk_x < u32(tilemap.tile_chunk_count_x))
 	assert(chunk_pos.tile_chunk_y < u32(tilemap.tile_chunk_count_y))
+
+	if chunk.tiles == nil {
+		size := int(tilemap.chunk_size * tilemap.chunk_size)
+		chunk.tiles = push_array(arena, u32, size)
+		for i in 0 ..< size {
+			chunk.tiles[i] = 1
+		}
+	}
 
 	chunk.tiles[chunk_pos.rel_tile_y * tilemap.chunk_size + chunk_pos.rel_tile_x] = value
 }

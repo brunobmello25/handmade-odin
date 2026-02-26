@@ -145,6 +145,17 @@ initialize_arena :: proc(arena: ^mem.Arena, memory: ^Memory, already_used: int) 
 	arena.data = (cast([^]u8)base)[:size]
 }
 
+push_struct :: proc(arena: ^mem.Arena, $T: typeid) -> ^T {
+	size := size_of(T)
+	ptr := mem.arena_alloc(arena, size) or_else panic("out of memory")
+	return cast(^T)ptr
+}
+
+push_array :: proc(arena: ^mem.Arena, $T: typeid, count: int) -> []T {
+	size := count * size_of(T)
+	ptr := mem.arena_alloc(arena, size) or_else panic("out of memory")
+	return (cast([^]T)ptr)[:count]
+}
 
 update_and_render :: proc(
 	memory: ^Memory,
@@ -163,16 +174,8 @@ update_and_render :: proc(
 		game_state.player_p.tile_rel_y = 0.1
 
 		initialize_arena(&game_state.world_arena, memory, size_of(GameState))
-
-		game_state.world = cast(^World)(mem.arena_alloc(
-				&game_state.world_arena,
-				size_of(World),
-			) or_else panic("outofmemory"))
-
-		game_state.world.tilemap = cast(^Tilemap)(mem.arena_alloc(
-				&game_state.world_arena,
-				size_of(Tilemap),
-			) or_else panic("outofmemory"))
+		game_state.world = push_struct(&game_state.world_arena, World)
+		game_state.world.tilemap = push_struct(&game_state.world_arena, Tilemap)
 
 		when ODIN_DEBUG {
 			assert(is_in_permanent_storage(memory, game_state.world))
@@ -186,61 +189,67 @@ update_and_render :: proc(
 		tilemap.chunk_mask = (1 << tilemap.chunk_shift) - 1
 		tilemap.chunk_size = (1 << tilemap.chunk_shift)
 		tilemap.tile_side_in_meters = 1.4
-		tilemap.tile_side_in_pixels = 6
+		tilemap.tile_side_in_pixels = 60
 		tilemap.meters_to_pixels = f32(tilemap.tile_side_in_pixels) / tilemap.tile_side_in_meters
 		tilemap.tile_chunk_count_x = 128
 		tilemap.tile_chunk_count_y = 128
 
-		size := int(
-			size_of(Tilemap_Chunk) * tilemap.tile_chunk_count_y * tilemap.tile_chunk_count_x,
-		)
-		tilemap.tile_chunks = (cast([^]Tilemap_Chunk)(mem.arena_alloc(
-					&game_state.world_arena,
-					size,
-				) or_else panic("out of memory")))[:size]
-
-
-		for y in 0 ..< tilemap.tile_chunk_count_y {
-			for x in 0 ..< tilemap.tile_chunk_count_x {
-				idx := y * tilemap.tile_chunk_count_x + x
-				size := int(tilemap.chunk_size * tilemap.chunk_size * size_of(u32))
-				tilemap.tile_chunks[idx].tiles = (cast([^]u32)(mem.arena_alloc(
-							&game_state.world_arena,
-							size,
-						) or_else panic("out of memory")))[:size]
-			}
-		}
+		count := int(tilemap.tile_chunk_count_y * tilemap.tile_chunk_count_x)
+		tilemap.tile_chunks = push_array(&game_state.world_arena, Tilemap_Chunk, count)
 
 		{
 			// TODO(bruno): entender por que casey faz essas inicializações com 17 e 9, e 32 screens. Tirou do cu?
 			tiles_per_width := 17
 			tiles_per_height := 9
 
+			door_left, door_right, door_top, door_bottom := false, false, false, false
+
 			screen_x, screen_y := 0, 0
 			for screen_index in 0 ..< 100 {
+				random_choice := rand.uint32() % 2
+				if random_choice == 1 {
+					door_right = true
+				} else {
+					door_top = true
+				}
+
 				for tile_y in 0 ..< tiles_per_height {
 					for tile_x in 0 ..< tiles_per_width {
 						abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
 						abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
 
 						tile_value := 1
-						if tile_x == 0 ||
-						   tile_x == tiles_per_width - 1 ||
-						   tile_y == 0 ||
-						   tile_y == tiles_per_height - 1 {
+						if tile_x == 0 && (!door_left || tile_y != tiles_per_height / 2) {
 							tile_value = 2
-
-							if tile_y == tiles_per_height / 2 || tile_x == tiles_per_width / 2 {
-								tile_value = 1
-							}
+						}
+						if tile_x == tiles_per_width - 1 &&
+						   (!door_right || tile_y != tiles_per_height / 2) {
+							tile_value = 2
+						}
+						if tile_y == 0 && (!door_bottom || tile_x != tiles_per_width / 2) {
+							tile_value = 2
+						}
+						if tile_y == tiles_per_height - 1 &&
+						   (!door_top || tile_x != tiles_per_width / 2) {
+							tile_value = 2
 						}
 
-						set_tile_value(tilemap, abs_tile_x, abs_tile_y, u32(tile_value))
+						set_tile_value(
+							&game_state.world_arena,
+							tilemap,
+							abs_tile_x,
+							abs_tile_y,
+							u32(tile_value),
+						)
 					}
 				}
 
-				choices: [2]u32 = {0, 1}
-				if rand.choice(choices[:]) == 0 {
+				door_left = door_right
+				door_bottom = door_top
+				door_right = false
+				door_top = false
+
+				if random_choice == 1 {
 					screen_x += 1
 				} else {
 					screen_y += 1
