@@ -14,10 +14,11 @@ World :: struct {
 }
 
 GameState :: struct {
-	tsine:       f32,
-	player_p:    Tilemap_Position,
-	world:       ^World,
-	world_arena: mem.Arena,
+	tsine:            f32,
+	player_p:         Tilemap_Position,
+	world:            ^World,
+	world_arena:      mem.Arena,
+	was_on_staircase: bool,
 }
 
 Memory :: struct {
@@ -170,6 +171,7 @@ update_and_render :: proc(
 		game_state.tsine = 0.0
 		game_state.player_p.abs_tile_x = 1
 		game_state.player_p.abs_tile_y = 3
+		game_state.player_p.abs_tile_z = 0
 		game_state.player_p.tile_rel_x = 0.1
 		game_state.player_p.tile_rel_y = 0.1
 
@@ -191,8 +193,11 @@ update_and_render :: proc(
 		tilemap.tile_side_in_meters = 1.4
 		tilemap.tile_chunk_count_x = 128
 		tilemap.tile_chunk_count_y = 128
+		tilemap.tile_chunk_count_z = 2
 
-		count := int(tilemap.tile_chunk_count_y * tilemap.tile_chunk_count_x)
+		count := int(
+			tilemap.tile_chunk_count_x * tilemap.tile_chunk_count_y * tilemap.tile_chunk_count_z,
+		)
 		tilemap.tile_chunks = push_array(&game_state.world_arena, Tilemap_Chunk, count)
 
 		{
@@ -201,11 +206,45 @@ update_and_render :: proc(
 			tiles_per_height := 9
 
 			door_left, door_right, door_top, door_bottom := false, false, false, false
+			door_up, door_down := false, false
 
-			screen_x, screen_y := 0, 0
+			screen_x, screen_y, screen_z := 0, 0, 0
+			last_was_z_change := false
+			// 1 = last z move went up, -1 = went down; used to place entrance staircase
+			last_z_dir := 0
+
 			for screen_index in 0 ..< 100 {
-				random_choice := rand.uint32() % 2
-				if random_choice == 1 {
+				can_go_z :=
+					!last_was_z_change &&
+					(screen_z > 0 || screen_z < int(tilemap.tile_chunk_count_z) - 1)
+
+				random_choice: u32
+				if can_go_z {
+					random_choice = rand.uint32() % 3
+				} else {
+					random_choice = rand.uint32() % 2
+				}
+
+				next_z := screen_z
+				if random_choice == 2 {
+					can_up := screen_z < int(tilemap.tile_chunk_count_z) - 1
+					can_down := screen_z > 0
+					if can_up && can_down {
+						if rand.uint32() % 2 == 0 {
+							door_up = true
+							next_z = screen_z + 1
+						} else {
+							door_down = true
+							next_z = screen_z - 1
+						}
+					} else if can_up {
+						door_up = true
+						next_z = screen_z + 1
+					} else {
+						door_down = true
+						next_z = screen_z - 1
+					}
+				} else if random_choice == 0 {
 					door_right = true
 				} else {
 					door_top = true
@@ -215,6 +254,7 @@ update_and_render :: proc(
 					for tile_x in 0 ..< tiles_per_width {
 						abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
 						abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
+						abs_tile_z := u32(screen_z)
 
 						tile_value := 1
 						if tile_x == 0 && (!door_left || tile_y != tiles_per_height / 2) {
@@ -232,25 +272,52 @@ update_and_render :: proc(
 							tile_value = 2
 						}
 
+						at_center :=
+							tile_x == tiles_per_width / 2 && tile_y == tiles_per_height / 2
+
+						// Outgoing staircase for this room
+						if door_up && at_center {tile_value = 3}
+						if door_down && at_center {tile_value = 4}
+
+						// Entrance staircase from the previous z transition:
+						// if we came up (last_z_dir==1), this floor has staircase down (4) to go back
+						// if we came down (last_z_dir==-1), this floor has staircase up (3) to go back
+						if last_was_z_change && at_center {
+							if last_z_dir == 1 {
+								tile_value = 4
+							} else {
+								tile_value = 3
+							}
+						}
+
 						set_tile_value(
 							&game_state.world_arena,
 							tilemap,
 							abs_tile_x,
 							abs_tile_y,
+							abs_tile_z,
 							u32(tile_value),
 						)
 					}
 				}
 
+				last_was_z_change = door_up || door_down
+				if door_up {last_z_dir = 1}
+				if door_down {last_z_dir = -1}
+
 				door_left = door_right
 				door_bottom = door_top
 				door_right = false
 				door_top = false
+				door_up = false
+				door_down = false
 
-				if random_choice == 1 {
+				if random_choice == 0 {
 					screen_x += 1
-				} else {
+				} else if random_choice == 1 {
 					screen_y += 1
+				} else {
+					screen_z = next_z
 				}
 			}
 		}
@@ -298,6 +365,27 @@ update_and_render :: proc(
 			   is_world_point_empty(tilemap, new_pos_right) {
 				game_state.player_p = new_pos
 			}
+
+			// Z transition: trigger once when entering a staircase tile,
+			// reset only when the player steps off it (prevents oscillation)
+			current_tile := get_tile_value(
+				tilemap,
+				game_state.player_p.abs_tile_x,
+				game_state.player_p.abs_tile_y,
+				game_state.player_p.abs_tile_z,
+			)
+			if !game_state.was_on_staircase {
+				if current_tile == 3 &&
+				   game_state.player_p.abs_tile_z + 1 < u32(tilemap.tile_chunk_count_z) {
+					game_state.player_p.abs_tile_z += 1
+					game_state.was_on_staircase = true
+				} else if current_tile == 4 && game_state.player_p.abs_tile_z > 0 {
+					game_state.player_p.abs_tile_z -= 1
+					game_state.was_on_staircase = true
+				}
+			} else if current_tile != 3 && current_tile != 4 {
+				game_state.was_on_staircase = false
+			}
 		}
 	}
 
@@ -315,13 +403,13 @@ update_and_render :: proc(
 			col := u32(i32(game_state.player_p.abs_tile_x) + i32(rel_col))
 			row := u32(i32(game_state.player_p.abs_tile_y) + i32(rel_row))
 
-			tile_id := get_tile_value(tilemap, col, row)
+			tile_id := get_tile_value(tilemap, col, row, game_state.player_p.abs_tile_z)
 
 			if tile_id > 0 {
 				gray: f32 = 0.5
-				if tile_id == 2 {
-					gray = 1.0
-				}
+				if tile_id == 2 {gray = 1.0} // wall
+				if tile_id == 3 {gray = 0.3} // stair up (darker)
+				if tile_id == 4 {gray = 0.7} // stair down (lighter)
 				if col == game_state.player_p.abs_tile_x && row == game_state.player_p.abs_tile_y {
 					gray = 0.0
 				}
