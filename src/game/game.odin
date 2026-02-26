@@ -189,8 +189,6 @@ update_and_render :: proc(
 		tilemap.chunk_mask = (1 << tilemap.chunk_shift) - 1
 		tilemap.chunk_size = (1 << tilemap.chunk_shift)
 		tilemap.tile_side_in_meters = 1.4
-		tilemap.tile_side_in_pixels = 60
-		tilemap.meters_to_pixels = f32(tilemap.tile_side_in_pixels) / tilemap.tile_side_in_meters
 		tilemap.tile_chunk_count_x = 128
 		tilemap.tile_chunk_count_y = 128
 
@@ -263,6 +261,9 @@ update_and_render :: proc(
 	world := game_state.world
 	tilemap := world.tilemap
 
+	tile_side_in_pixels := 60
+	meters_to_pixels := f32(tile_side_in_pixels) / tilemap.tile_side_in_meters
+
 	player_height := tilemap.tile_side_in_meters
 	player_width := 0.75 * player_height
 
@@ -327,28 +328,28 @@ update_and_render :: proc(
 
 				min_x :=
 					center_x -
-					tilemap.meters_to_pixels * game_state.player_p.tile_rel_x +
-					(f32(rel_col) - 0.5) * f32(tilemap.tile_side_in_pixels)
+					meters_to_pixels * game_state.player_p.tile_rel_x +
+					(f32(rel_col) - 0.5) * f32(tile_side_in_pixels)
 				min_y :=
 					center_y +
-					tilemap.meters_to_pixels * game_state.player_p.tile_rel_y -
-					f32(rel_row) * f32(tilemap.tile_side_in_pixels)
-				max_x := min_x + f32(tilemap.tile_side_in_pixels)
-				max_y := min_y - f32(tilemap.tile_side_in_pixels)
+					meters_to_pixels * game_state.player_p.tile_rel_y -
+					f32(rel_row) * f32(tile_side_in_pixels)
+				max_x := min_x + f32(tile_side_in_pixels)
+				max_y := min_y - f32(tile_side_in_pixels)
 				draw_rectangle(backbuffer, min_x, max_y, max_x, min_y, gray, gray, gray)
 			}
 		}
 	}
 
 	// Player (yellow)
-	player_left := center_x - 0.5 * tilemap.meters_to_pixels * player_width
-	player_top := center_y - tilemap.meters_to_pixels * player_height
+	player_left := center_x - 0.5 * meters_to_pixels * player_width
+	player_top := center_y - meters_to_pixels * player_height
 	draw_rectangle(
 		backbuffer,
 		player_left,
 		player_top,
-		player_left + tilemap.meters_to_pixels * player_width,
-		player_top + tilemap.meters_to_pixels * player_height,
+		player_left + meters_to_pixels * player_width,
+		player_top + meters_to_pixels * player_height,
 		1.0,
 		1.0,
 		0.0,

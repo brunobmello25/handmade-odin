@@ -7,8 +7,6 @@ Tilemap :: struct {
 	chunk_mask:          u32,
 	chunk_size:          u32,
 	tile_side_in_meters: f32,
-	tile_side_in_pixels: i32,
-	meters_to_pixels:    f32,
 	tile_chunk_count_x:  i32,
 	tile_chunk_count_y:  i32,
 	tile_chunks:         []Tilemap_Chunk,
