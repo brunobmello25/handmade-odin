@@ -2,6 +2,7 @@ package game
 
 import "core:log"
 import "core:math"
+import "core:math/rand"
 import "core:mem"
 
 _ :: log
@@ -13,10 +14,11 @@ World :: struct {
 }
 
 GameState :: struct {
-	tsine:       f32,
-	player_p:    Tilemap_Position,
-	world:       ^World,
-	world_arena: mem.Arena,
+	tsine:            f32,
+	player_p:         Tilemap_Position,
+	world:            ^World,
+	world_arena:      mem.Arena,
+	was_on_staircase: bool,
 }
 
 Memory :: struct {
@@ -144,6 +146,17 @@ initialize_arena :: proc(arena: ^mem.Arena, memory: ^Memory, already_used: int) 
 	arena.data = (cast([^]u8)base)[:size]
 }
 
+push_struct :: proc(arena: ^mem.Arena, $T: typeid) -> ^T {
+	size := size_of(T)
+	ptr := mem.arena_alloc(arena, size) or_else panic("out of memory")
+	return cast(^T)ptr
+}
+
+push_array :: proc(arena: ^mem.Arena, $T: typeid, count: int) -> []T {
+	size := count * size_of(T)
+	ptr := mem.arena_alloc(arena, size) or_else panic("out of memory")
+	return (cast([^]T)ptr)[:count]
+}
 
 update_and_render :: proc(
 	memory: ^Memory,
@@ -153,67 +166,158 @@ update_and_render :: proc(
 ) {
 	assert(size_of(GameState) <= memory.permanent_storage_size)
 	game_state := cast(^GameState)memory.permanent_storage
-	context.allocator = mem.arena_allocator(&game_state.world_arena)
 
 	if !memory.is_initialized {
 		game_state.tsine = 0.0
 		game_state.player_p.abs_tile_x = 1
 		game_state.player_p.abs_tile_y = 3
+		game_state.player_p.abs_tile_z = 0
 		game_state.player_p.tile_rel_x = 0.1
 		game_state.player_p.tile_rel_y = 0.1
 
 		initialize_arena(&game_state.world_arena, memory, size_of(GameState))
+		game_state.world = push_struct(&game_state.world_arena, World)
+		game_state.world.tilemap = push_struct(&game_state.world_arena, Tilemap)
 
-		game_state.world = new(World)
-		world := game_state.world
-		world.tilemap = new(Tilemap)
 		when ODIN_DEBUG {
 			assert(is_in_permanent_storage(memory, game_state.world))
-			assert(is_in_permanent_storage(memory, world.tilemap))
+			assert(is_in_permanent_storage(memory, game_state.world.tilemap))
 		}
+
+		world := game_state.world
 		tilemap := world.tilemap
 
 		tilemap.chunk_shift = 4
 		tilemap.chunk_mask = (1 << tilemap.chunk_shift) - 1
 		tilemap.chunk_size = (1 << tilemap.chunk_shift)
 		tilemap.tile_side_in_meters = 1.4
-		tilemap.tile_side_in_pixels = 60
-		tilemap.meters_to_pixels = f32(tilemap.tile_side_in_pixels) / tilemap.tile_side_in_meters
 		tilemap.tile_chunk_count_x = 128
 		tilemap.tile_chunk_count_y = 128
-		tilemap.tile_chunks = make(
-			[]Tilemap_Chunk,
-			tilemap.tile_chunk_count_x * tilemap.tile_chunk_count_y,
+		tilemap.tile_chunk_count_z = 2
+
+		count := int(
+			tilemap.tile_chunk_count_x * tilemap.tile_chunk_count_y * tilemap.tile_chunk_count_z,
 		)
-		for y in 0 ..< tilemap.tile_chunk_count_y {
-			for x in 0 ..< tilemap.tile_chunk_count_x {
-				tilemap.tile_chunks[y * tilemap.tile_chunk_count_x + x].tiles = make(
-					[]u32,
-					tilemap.chunk_size * tilemap.chunk_size,
-				)
-			}
-		}
+		tilemap.tile_chunks = push_array(&game_state.world_arena, Tilemap_Chunk, count)
 
 		{
 			// TODO(bruno): entender por que casey faz essas inicializações com 17 e 9, e 32 screens. Tirou do cu?
 			tiles_per_width := 17
 			tiles_per_height := 9
-			for screen_y in 0 ..< 32 {
-				for screen_x in 0 ..< 32 {
-					for tile_y in 0 ..< tiles_per_height {
-						for tile_x in 0 ..< tiles_per_width {
-							abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
-							abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
 
-							banana := true ? 1 : 2
-							set_tile_value(
-								tilemap,
-								abs_tile_x,
-								abs_tile_y,
-								bool(tile_x == tile_y) && bool(tile_y % 2) ? 1 : 0,
-							)
+			door_left, door_right, door_top, door_bottom := false, false, false, false
+			door_up, door_down := false, false
+
+			screen_x, screen_y, screen_z := 0, 0, 0
+			last_was_z_change := false
+			// 1 = last z move went up, -1 = went down; used to place entrance staircase
+			last_z_dir := 0
+
+			for screen_index in 0 ..< 100 {
+				can_go_z :=
+					!last_was_z_change &&
+					(screen_z > 0 || screen_z < int(tilemap.tile_chunk_count_z) - 1)
+
+				random_choice: u32
+				if can_go_z {
+					random_choice = rand.uint32() % 3
+				} else {
+					random_choice = rand.uint32() % 2
+				}
+
+				next_z := screen_z
+				if random_choice == 2 {
+					can_up := screen_z < int(tilemap.tile_chunk_count_z) - 1
+					can_down := screen_z > 0
+					if can_up && can_down {
+						if rand.uint32() % 2 == 0 {
+							door_up = true
+							next_z = screen_z + 1
+						} else {
+							door_down = true
+							next_z = screen_z - 1
 						}
+					} else if can_up {
+						door_up = true
+						next_z = screen_z + 1
+					} else {
+						door_down = true
+						next_z = screen_z - 1
 					}
+				} else if random_choice == 0 {
+					door_right = true
+				} else {
+					door_top = true
+				}
+
+				for tile_y in 0 ..< tiles_per_height {
+					for tile_x in 0 ..< tiles_per_width {
+						abs_tile_x := u32(screen_x * tiles_per_width + tile_x)
+						abs_tile_y := u32(screen_y * tiles_per_height + tile_y)
+						abs_tile_z := u32(screen_z)
+
+						tile_value := 1
+						if tile_x == 0 && (!door_left || tile_y != tiles_per_height / 2) {
+							tile_value = 2
+						}
+						if tile_x == tiles_per_width - 1 &&
+						   (!door_right || tile_y != tiles_per_height / 2) {
+							tile_value = 2
+						}
+						if tile_y == 0 && (!door_bottom || tile_x != tiles_per_width / 2) {
+							tile_value = 2
+						}
+						if tile_y == tiles_per_height - 1 &&
+						   (!door_top || tile_x != tiles_per_width / 2) {
+							tile_value = 2
+						}
+
+						at_center :=
+							tile_x == tiles_per_width / 2 && tile_y == tiles_per_height / 2
+
+						// Outgoing staircase for this room
+						if door_up && at_center {tile_value = 3}
+						if door_down && at_center {tile_value = 4}
+
+						// Entrance staircase from the previous z transition:
+						// if we came up (last_z_dir==1), this floor has staircase down (4) to go back
+						// if we came down (last_z_dir==-1), this floor has staircase up (3) to go back
+						if last_was_z_change && at_center {
+							if last_z_dir == 1 {
+								tile_value = 4
+							} else {
+								tile_value = 3
+							}
+						}
+
+						set_tile_value(
+							&game_state.world_arena,
+							tilemap,
+							abs_tile_x,
+							abs_tile_y,
+							abs_tile_z,
+							u32(tile_value),
+						)
+					}
+				}
+
+				last_was_z_change = door_up || door_down
+				if door_up {last_z_dir = 1}
+				if door_down {last_z_dir = -1}
+
+				door_left = door_right
+				door_bottom = door_top
+				door_right = false
+				door_top = false
+				door_up = false
+				door_down = false
+
+				if random_choice == 0 {
+					screen_x += 1
+				} else if random_choice == 1 {
+					screen_y += 1
+				} else {
+					screen_z = next_z
 				}
 			}
 		}
@@ -223,6 +327,9 @@ update_and_render :: proc(
 
 	world := game_state.world
 	tilemap := world.tilemap
+
+	tile_side_in_pixels := 60
+	meters_to_pixels := f32(tile_side_in_pixels) / tilemap.tile_side_in_meters
 
 	player_height := tilemap.tile_side_in_meters
 	player_width := 0.75 * player_height
@@ -258,6 +365,27 @@ update_and_render :: proc(
 			   is_world_point_empty(tilemap, new_pos_right) {
 				game_state.player_p = new_pos
 			}
+
+			// Z transition: trigger once when entering a staircase tile,
+			// reset only when the player steps off it (prevents oscillation)
+			current_tile := get_tile_value(
+				tilemap,
+				game_state.player_p.abs_tile_x,
+				game_state.player_p.abs_tile_y,
+				game_state.player_p.abs_tile_z,
+			)
+			if !game_state.was_on_staircase {
+				if current_tile == 3 &&
+				   game_state.player_p.abs_tile_z + 1 < u32(tilemap.tile_chunk_count_z) {
+					game_state.player_p.abs_tile_z += 1
+					game_state.was_on_staircase = true
+				} else if current_tile == 4 && game_state.player_p.abs_tile_z > 0 {
+					game_state.player_p.abs_tile_z -= 1
+					game_state.was_on_staircase = true
+				}
+			} else if current_tile != 3 && current_tile != 4 {
+				game_state.was_on_staircase = false
+			}
 		}
 	}
 
@@ -270,44 +398,46 @@ update_and_render :: proc(
 	center_y := 0.5 * f32(backbuffer.height)
 
 
-	for rel_row in -10 ..< 10 {
-		for rel_col in -20 ..< 20 {
+	for rel_row in -100 ..< 100 {
+		for rel_col in -200 ..< 200 {
 			col := u32(i32(game_state.player_p.abs_tile_x) + i32(rel_col))
 			row := u32(i32(game_state.player_p.abs_tile_y) + i32(rel_row))
 
-			tile_id := get_tile_value(tilemap, col, row)
+			tile_id := get_tile_value(tilemap, col, row, game_state.player_p.abs_tile_z)
 
-			gray: f32 = 0.5
-			if tile_id == 1 {
-				gray = 1.0
-			}
-			if col == game_state.player_p.abs_tile_x && row == game_state.player_p.abs_tile_y {
-				gray = 0.0
-			}
+			if tile_id > 0 {
+				gray: f32 = 0.5
+				if tile_id == 2 {gray = 1.0} // wall
+				if tile_id == 3 {gray = 0.3} // stair up (darker)
+				if tile_id == 4 {gray = 0.7} // stair down (lighter)
+				if col == game_state.player_p.abs_tile_x && row == game_state.player_p.abs_tile_y {
+					gray = 0.0
+				}
 
-			min_x :=
-				center_x -
-				tilemap.meters_to_pixels * game_state.player_p.tile_rel_x +
-				(f32(rel_col) - 0.5) * f32(tilemap.tile_side_in_pixels)
-			min_y :=
-				center_y +
-				tilemap.meters_to_pixels * game_state.player_p.tile_rel_y -
-				f32(rel_row) * f32(tilemap.tile_side_in_pixels)
-			max_x := min_x + f32(tilemap.tile_side_in_pixels)
-			max_y := min_y - f32(tilemap.tile_side_in_pixels)
-			draw_rectangle(backbuffer, min_x, max_y, max_x, min_y, gray, gray, gray)
+				min_x :=
+					center_x -
+					meters_to_pixels * game_state.player_p.tile_rel_x +
+					(f32(rel_col) - 0.5) * f32(tile_side_in_pixels)
+				min_y :=
+					center_y +
+					meters_to_pixels * game_state.player_p.tile_rel_y -
+					f32(rel_row) * f32(tile_side_in_pixels)
+				max_x := min_x + f32(tile_side_in_pixels)
+				max_y := min_y - f32(tile_side_in_pixels)
+				draw_rectangle(backbuffer, min_x, max_y, max_x, min_y, gray, gray, gray)
+			}
 		}
 	}
 
 	// Player (yellow)
-	player_left := center_x - 0.5 * tilemap.meters_to_pixels * player_width
-	player_top := center_y - tilemap.meters_to_pixels * player_height
+	player_left := center_x - 0.5 * meters_to_pixels * player_width
+	player_top := center_y - meters_to_pixels * player_height
 	draw_rectangle(
 		backbuffer,
 		player_left,
 		player_top,
-		player_left + tilemap.meters_to_pixels * player_width,
-		player_top + tilemap.meters_to_pixels * player_height,
+		player_left + meters_to_pixels * player_width,
+		player_top + meters_to_pixels * player_height,
 		1.0,
 		1.0,
 		0.0,
