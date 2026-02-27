@@ -19,6 +19,7 @@ GameState :: struct {
 	world:            ^World,
 	world_arena:      mem.Arena,
 	was_on_staircase: bool,
+	bitmap_pointer:   []u32, // DEBUG: remove this
 }
 
 Memory :: struct {
@@ -308,7 +309,7 @@ update_and_render :: proc(
 			}
 		}
 
-		debug_load_bmp(platform_procedures)
+		game_state.bitmap_pointer = debug_load_bmp(platform_procedures)
 
 		memory.is_initialized = true
 	}
@@ -430,6 +431,17 @@ update_and_render :: proc(
 		1.0,
 		0.0,
 	)
+
+	when false {
+		for y in 0 ..< backbuffer.height {
+			for x in 0 ..< backbuffer.width {
+				pixel := game_state.bitmap_pointer[y * backbuffer.width + x]
+				if pixel != 0 {
+					backbuffer.pixels[y * backbuffer.width + x] = pixel
+				}
+			}
+		}
+	}
 }
 
 when ODIN_DEBUG {
@@ -446,11 +458,13 @@ when ODIN_DEBUG {
 		bits_per_pixel:    u16,
 	}
 
-	debug_load_bmp :: proc(platform_procedures: Platform_Procedures) {
+	debug_load_bmp :: proc(platform_procedures: Platform_Procedures) -> []u32 {
 		contents := platform_procedures.read_entire_file("data/test/test_background.bmp")
 		header := cast(^Bitmap_Header)raw_data(contents)
-
-		log.debug(header)
+		pixels_mp := cast([^]u32)raw_data(contents)[header.pixel_data_offset:]
+		pixel_count := header.width * header.height
+		pixels := pixels_mp[:pixel_count]
+		return pixels
 	}
 }
 
