@@ -13,13 +13,21 @@ World :: struct {
 	tilemap: ^Tilemap,
 }
 
+when ODIN_DEBUG {
+	Bitmap_Image :: struct {
+		data:   []u32,
+		width:  i32,
+		height: i32,
+	}
+}
+
 GameState :: struct {
 	tsine:            f32,
 	player_p:         Tilemap_Position,
 	world:            ^World,
 	world_arena:      mem.Arena,
 	was_on_staircase: bool,
-	bitmap_pointer:   []u32, // DEBUG: remove this
+	bitmap_image:     Bitmap_Image, // DEBUG: remove this
 }
 
 Memory :: struct {
@@ -94,6 +102,7 @@ draw_rectangle :: proc(
 	if max_y > buffer.height {max_y = buffer.height}
 
 	// Pixel format: UNCOMPRESSED_R8G8B8A8 on little-endian => R|G<<8|B<<16|A<<24
+	// bytes in hex format are: 0xAABBGGRR
 	color := u32(r * 255.0) | (u32(g * 255.0) << 8) | (u32(b * 255.0) << 16) | (0xFF << 24)
 
 	for y in min_y ..< max_y {
@@ -309,10 +318,14 @@ update_and_render :: proc(
 			}
 		}
 
-		game_state.bitmap_pointer = debug_load_bmp(
+		bitmap_image, width, height := debug_load_bmp(
 			platform_procedures,
-			"data/test/structure_test_art.bmp",
+			// "data/test/structure_test_art.bmp",
+			"data/test/test_background.bmp",
 		)
+		game_state.bitmap_image.data = bitmap_image
+		game_state.bitmap_image.width = width
+		game_state.bitmap_image.height = height
 
 		memory.is_initialized = true
 	}
@@ -435,13 +448,14 @@ update_and_render :: proc(
 		0.0,
 	)
 
-	when false {
-		for y in 0 ..< backbuffer.height {
-			for x in 0 ..< backbuffer.width {
-				pixel := game_state.bitmap_pointer[y * backbuffer.width + x]
-				if pixel != 0 {
-					backbuffer.pixels[y * backbuffer.width + x] = pixel
-				}
+	when true {
+		height := clamp(game_state.bitmap_image.height, 0, backbuffer.height)
+		width := clamp(game_state.bitmap_image.width, 0, backbuffer.width)
+
+		for y in 0 ..< height {
+			for x in 0 ..< width {
+				pixel := game_state.bitmap_image.data[y * game_state.bitmap_image.width + x]
+				backbuffer.pixels[y * backbuffer.width + x] = pixel
 			}
 		}
 	}
@@ -449,26 +463,68 @@ update_and_render :: proc(
 
 when ODIN_DEBUG {
 	Bitmap_Header :: struct #packed {
-		file_type:         [2]u8,
-		file_size:         u32,
-		reserved1:         u16,
-		reserved2:         u16,
-		pixel_data_offset: u32,
-		size:              u32,
-		width:             i32,
-		height:            i32,
-		planes:            u16,
-		bits_per_pixel:    u16,
+		// file header
+		file_type:          [2]u8,
+		file_size:          u32,
+		reserved1:          u16,
+		reserved2:          u16,
+		pixel_data_offset:  u32,
+		// DIB header
+		size:               u32,
+		width:              i32,
+		height:             i32,
+		planes:             u16,
+		bits_per_pixel:     u16,
+		compression:        u32,
+		image_size:         u32,
+		x_pixels_per_meter: i32,
+		y_pixels_per_meter: i32,
+		colors_used:        u32,
+		colors_important:   u32,
+		// V4 masks
+		red_mask:           u32,
+		green_mask:         u32,
+		blue_mask:          u32,
+		alpha_mask:         u32,
 	}
 
-	debug_load_bmp :: proc(platform_procedures: Platform_Procedures, filename: string) -> []u32 {
+	debug_load_bmp :: proc(
+		platform_procedures: Platform_Procedures,
+		filename: string,
+	) -> (
+		[]u32,
+		i32,
+		i32,
+	) {
 		contents := platform_procedures.read_entire_file(filename)
+
 		header := cast(^Bitmap_Header)raw_data(contents)
 		pixels_mp := cast([^]u32)raw_data(contents)[header.pixel_data_offset:]
 		pixel_count := header.width * header.height
+
 		pixels := pixels_mp[:pixel_count]
+		if header.red_mask == 0x00FF0000 {
+			// 0xAARRGGBB -> 0xAABBGGRR
+			for &p in pixels {
+				r := (p & 0x00FF0000) >> 16
+				g := (p & 0x0000FF00)
+				b := (p & 0x000000FF) << 16
+				a := (p & 0xFF000000)
+				p = a | r | g | b
+			}
+		} else if header.red_mask == 0xFF000000 {
+			// 0xRRGGBBAA -> 0xAABBGGRR
+			for &p in pixels {
+				r := (p & 0xFF000000) >> 24
+				g := (p & 0x00FF0000) >> 8
+				b := (p & 0x0000FF00) << 8
+				a := (p & 0x000000FF) << 24
+				p = a | b | g | r
+			}
+		}
+
 		// TODO: leaking memory here - returning pixels slice that points into a subslice of contents, but contents itself is never freed.
-		return pixels
+		return pixels, header.width, header.height
 	}
 }
 
