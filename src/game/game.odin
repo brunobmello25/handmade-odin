@@ -464,6 +464,7 @@ when ODIN_DEBUG {
 		pixels_mp := cast([^]u32)raw_data(contents)[header.pixel_data_offset:]
 		pixel_count := header.width * header.height
 		pixels := pixels_mp[:pixel_count]
+		// TODO: leaking memory here - returning pixels slice that points into a subslice of contents, but contents itself is never freed.
 		return pixels
 	}
 }
