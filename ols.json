@@ -1,5 +1,17 @@
 {
     "enable_debug": true,
     "odin_command": "odin",
-    "checker_args": "-debug"
+    "checker_args": "-debug",
+    "profile": "debug",
+    "profiles": [
+        {
+            "name": "debug",
+            "checker_path": [
+                "src"
+            ],
+            "defines": {
+                "ODIN_DEBUG": "true"
+            }
+        }
+    ]
 }

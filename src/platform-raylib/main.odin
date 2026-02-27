@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:log"
 import "core:mem"
+import "core:os"
 import rl "vendor:raylib"
 
 import "../game"
@@ -289,6 +290,12 @@ init_memory :: proc() -> (game.Memory, runtime.Allocator_Error) {
 		nil
 }
 
+when ODIN_DEBUG {
+	debug_load_entire_file :: proc(path: string) -> []byte {
+		return os.read_entire_file(path) or_else panic("Failed to read file")
+	}
+}
+
 main :: proc() {
 	context.logger = log.create_console_logger()
 
@@ -325,6 +332,7 @@ main :: proc() {
 				sample_rate = sound_buffer.sample_rate,
 			},
 			&input,
+			game.Platform_Procedures{read_entire_file = debug_load_entire_file},
 		)
 		push_audio(sound_buffer, frames_to_generate)
 

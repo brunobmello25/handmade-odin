@@ -19,6 +19,7 @@ GameState :: struct {
 	world:            ^World,
 	world_arena:      mem.Arena,
 	was_on_staircase: bool,
+	bitmap_pointer:   []u32, // DEBUG: remove this
 }
 
 Memory :: struct {
@@ -76,21 +77,6 @@ Input :: struct {
 	mouse_z:       i32,
 	delta_time:    f32,
 	controllers:   [MAX_CONTROLLERS + 1]Controller_Input,
-}
-
-recanonical_coord :: proc(tilemap: ^Tilemap, tile: ^u32, tile_rel: ^f32) {
-	offset := i32(math.round(tile_rel^ / tilemap.tile_side_in_meters))
-	tile^ = u32(i32(tile^) + offset)
-	tile_rel^ -= f32(offset) * tilemap.tile_side_in_meters
-	assert(tile_rel^ >= -0.5 * tilemap.tile_side_in_meters)
-	assert(tile_rel^ <= 0.5 * tilemap.tile_side_in_meters)
-}
-
-recanonical_position :: proc(tilemap: ^Tilemap, pos: Tilemap_Position) -> Tilemap_Position {
-	result := pos
-	recanonical_coord(tilemap, &result.abs_tile_x, &result.tile_rel_x)
-	recanonical_coord(tilemap, &result.abs_tile_y, &result.tile_rel_y)
-	return result
 }
 
 draw_rectangle :: proc(
@@ -163,6 +149,7 @@ update_and_render :: proc(
 	backbuffer: Backbuffer,
 	sound_buffer: SoundBuffer,
 	input: ^Input,
+	platform_procedures: Platform_Procedures,
 ) {
 	assert(size_of(GameState) <= memory.permanent_storage_size)
 	game_state := cast(^GameState)memory.permanent_storage
@@ -322,6 +309,8 @@ update_and_render :: proc(
 			}
 		}
 
+		game_state.bitmap_pointer = debug_load_bmp(platform_procedures)
+
 		memory.is_initialized = true
 	}
 
@@ -407,9 +396,9 @@ update_and_render :: proc(
 
 			if tile_id > 0 {
 				gray: f32 = 0.5
-				if tile_id == 2 {gray = 1.0} // wall
-				if tile_id == 3 {gray = 0.3} // stair up (darker)
-				if tile_id == 4 {gray = 0.7} // stair down (lighter)
+				if tile_id == 2 {gray = 1.0} 	// wall
+				if tile_id == 3 {gray = 0.3} 	// stair up (darker)
+				if tile_id == 4 {gray = 0.7} 	// stair down (lighter)
 				if col == game_state.player_p.abs_tile_x && row == game_state.player_p.abs_tile_y {
 					gray = 0.0
 				}
@@ -442,6 +431,51 @@ update_and_render :: proc(
 		1.0,
 		0.0,
 	)
+
+	when false {
+		for y in 0 ..< backbuffer.height {
+			for x in 0 ..< backbuffer.width {
+				pixel := game_state.bitmap_pointer[y * backbuffer.width + x]
+				if pixel != 0 {
+					backbuffer.pixels[y * backbuffer.width + x] = pixel
+				}
+			}
+		}
+	}
+}
+
+when ODIN_DEBUG {
+	Bitmap_Header :: struct #packed {
+		file_type:         [2]u8,
+		file_size:         u32,
+		reserved1:         u16,
+		reserved2:         u16,
+		pixel_data_offset: u32,
+		size:              u32,
+		width:             i32,
+		height:            i32,
+		planes:            u16,
+		bits_per_pixel:    u16,
+	}
+
+	debug_load_bmp :: proc(platform_procedures: Platform_Procedures) -> []u32 {
+		contents := platform_procedures.read_entire_file("data/test/test_background.bmp")
+		header := cast(^Bitmap_Header)raw_data(contents)
+		pixels_mp := cast([^]u32)raw_data(contents)[header.pixel_data_offset:]
+		pixel_count := header.width * header.height
+		pixels := pixels_mp[:pixel_count]
+		// TODO: leaking memory here - returning pixels slice that points into a subslice of contents, but contents itself is never freed.
+		return pixels
+	}
+}
+
+when ODIN_DEBUG {
+	Platform_Procedures :: struct {
+		read_entire_file: proc(name: string) -> []byte,
+	}
+
+} else {
+	Platform_Procedures :: struct {}
 }
 
 when ODIN_DEBUG {
