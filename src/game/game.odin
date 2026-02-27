@@ -308,7 +308,7 @@ update_and_render :: proc(
 			}
 		}
 
-		load_bpm(platform_procedures)
+		debug_load_bmp(platform_procedures)
 
 		memory.is_initialized = true
 	}
@@ -433,8 +433,24 @@ update_and_render :: proc(
 }
 
 when ODIN_DEBUG {
-	load_bpm :: proc(platform_procedures: Platform_Procedures) {
+	Bitmap_Header :: struct #packed {
+		file_type:         [2]u8,
+		file_size:         u32,
+		reserved1:         u16,
+		reserved2:         u16,
+		pixel_data_offset: u32,
+		size:              u32,
+		width:             i32,
+		height:            i32,
+		planes:            u16,
+		bits_per_pixel:    u16,
+	}
+
+	debug_load_bmp :: proc(platform_procedures: Platform_Procedures) {
 		contents := platform_procedures.read_entire_file("data/test/test_background.bmp")
+		header := cast(^Bitmap_Header)raw_data(contents)
+
+		log.debug(header)
 	}
 }
 
