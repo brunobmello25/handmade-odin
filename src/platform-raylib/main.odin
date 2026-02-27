@@ -91,27 +91,6 @@ blit_backbuffer :: proc(backbuffer: Backbuffer) {
 	rl.DrawTexture(backbuffer.texture, 0, 0, rl.WHITE)
 }
 
-resize_backbuffer :: proc(backbuffer: ^Backbuffer, width, height: i32) {
-	backbuffer.width = width
-	backbuffer.height = height
-
-	if backbuffer.pixels != nil {
-		delete(backbuffer.pixels)
-	}
-
-	backbuffer.pixels = make([]u32, width * height)
-	rl.UnloadTexture(backbuffer.texture)
-	backbuffer.texture = rl.LoadTextureFromImage(
-		rl.Image {
-			width = width,
-			height = height,
-			mipmaps = 1,
-			format = rl.PixelFormat.UNCOMPRESSED_R8G8B8A8,
-			data = raw_data(backbuffer.pixels),
-		},
-	)
-}
-
 // Returns a Button_State sampled from a keyboard key this frame.
 fill_button_key :: proc(key: rl.KeyboardKey) -> game.Button_State {
 	changed := rl.IsKeyPressed(key) || rl.IsKeyReleased(key)
@@ -337,13 +316,6 @@ main :: proc() {
 		push_audio(sound_buffer, frames_to_generate)
 
 		blit_backbuffer(backbuffer)
-
-		if rl.IsWindowResized() {
-			new_width := rl.GetScreenWidth()
-			new_height := rl.GetScreenHeight()
-			resize_backbuffer(&backbuffer, new_width, new_height)
-			log.info("Resized backbuffer to %d x %d", new_width, new_height)
-		}
 
 		rl.EndDrawing()
 	}

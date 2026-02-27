@@ -309,7 +309,10 @@ update_and_render :: proc(
 			}
 		}
 
-		game_state.bitmap_pointer = debug_load_bmp(platform_procedures)
+		game_state.bitmap_pointer = debug_load_bmp(
+			platform_procedures,
+			"data/test/structure_test_art.bmp",
+		)
 
 		memory.is_initialized = true
 	}
@@ -458,8 +461,8 @@ when ODIN_DEBUG {
 		bits_per_pixel:    u16,
 	}
 
-	debug_load_bmp :: proc(platform_procedures: Platform_Procedures) -> []u32 {
-		contents := platform_procedures.read_entire_file("data/test/test_background.bmp")
+	debug_load_bmp :: proc(platform_procedures: Platform_Procedures, filename: string) -> []u32 {
+		contents := platform_procedures.read_entire_file(filename)
 		header := cast(^Bitmap_Header)raw_data(contents)
 		pixels_mp := cast([^]u32)raw_data(contents)[header.pixel_data_offset:]
 		pixel_count := header.width * header.height
