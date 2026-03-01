@@ -4,6 +4,15 @@ vim.keymap.set("n", "<M-m>", function()
 	vim.cmd("Compile bin/build.sh")
 end, {})
 
+dap.adapters.codelldb = {
+	type = "server",
+	port = "${port}",
+	executable = {
+		command = "codelldb",
+		args = { "--port", "${port}" },
+	},
+}
+
 dap.configurations.odin = {
 	{
 		name = "Debug Game (codelldb)",

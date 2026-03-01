@@ -9,16 +9,14 @@ _ :: log
 
 MAX_CONTROLLERS :: 4
 
-World :: struct {
-	tilemap: ^Tilemap,
+LoadedBitmap :: struct {
+	width:  i32,
+	height: i32,
+	pixels: []u32,
 }
 
-when ODIN_DEBUG {
-	Bitmap_Image :: struct {
-		data:   []u32,
-		width:  i32,
-		height: i32,
-	}
+World :: struct {
+	tilemap: ^Tilemap,
 }
 
 GameState :: struct {
@@ -27,7 +25,7 @@ GameState :: struct {
 	world:            ^World,
 	world_arena:      mem.Arena,
 	was_on_staircase: bool,
-	bitmap_image:     Bitmap_Image, // DEBUG: remove this
+	bitmap_image:     LoadedBitmap, // DEBUG: remove this
 }
 
 Memory :: struct {
@@ -318,14 +316,11 @@ update_and_render :: proc(
 			}
 		}
 
-		bitmap_image, width, height := debug_load_bmp(
+		game_state.bitmap_image = debug_load_bmp(
 			platform_procedures,
-			// "data/test/structure_test_art.bmp",
-			"data/test/test_background.bmp",
+			"data/test/structure_test_art.bmp",
+			// "data/test/test_background.bmp",
 		)
-		game_state.bitmap_image.data = bitmap_image
-		game_state.bitmap_image.width = width
-		game_state.bitmap_image.height = height
 
 		memory.is_initialized = true
 	}
@@ -454,7 +449,7 @@ update_and_render :: proc(
 
 		for y in 0 ..< height {
 			for x in 0 ..< width {
-				pixel := game_state.bitmap_image.data[y * game_state.bitmap_image.width + x]
+				pixel := game_state.bitmap_image.pixels[y * game_state.bitmap_image.width + x]
 				backbuffer.pixels[y * backbuffer.width + x] = pixel
 			}
 		}
@@ -491,11 +486,7 @@ when ODIN_DEBUG {
 	debug_load_bmp :: proc(
 		platform_procedures: Platform_Procedures,
 		filename: string,
-	) -> (
-		[]u32,
-		i32,
-		i32,
-	) {
+	) -> LoadedBitmap {
 		contents := platform_procedures.read_entire_file(filename)
 
 		header := cast(^Bitmap_Header)raw_data(contents)
@@ -524,7 +515,7 @@ when ODIN_DEBUG {
 		}
 
 		// TODO: leaking memory here - returning pixels slice that points into a subslice of contents, but contents itself is never freed.
-		return pixels, header.width, header.height
+		return LoadedBitmap{pixels = pixels, width = header.width, height = header.height}
 	}
 }
 
